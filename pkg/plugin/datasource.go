@@ -130,6 +130,10 @@ func parseResourceQuery(reqURL string) url.Values {
 	if idx < 0 {
 		return url.Values{}
 	}
+	// url.ParseQuery only fails on malformed escape sequences and still
+	// returns any pairs it could decode before the error. Partial values
+	// are fine here — callers Get() each key individually and treat empty
+	// strings as "not provided".
 	qs, _ := url.ParseQuery(reqURL[idx+1:])
 	return qs
 }
@@ -148,6 +152,8 @@ func (d *Datasource) CallResource(ctx context.Context, req *backend.CallResource
 	case "field_values":
 		limit := 0
 		if v := qs.Get("limit"); v != "" {
+			// Non-numeric limits collapse to 0; resourceFieldValues then
+			// re-defaults to 100, so the parse error doesn't need to surface.
 			limit, _ = strconv.Atoi(v)
 		}
 		return d.resourceFieldValues(ctx, qs.Get("field"), limit, qs.Get("service"), qs.Get("query"), sender)

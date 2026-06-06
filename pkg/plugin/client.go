@@ -12,7 +12,23 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/grafana/grafana-plugin-sdk-go/backend"
 )
+
+func readErrBody(body io.Reader) []byte {
+	b, err := io.ReadAll(body)
+	if err != nil {
+		backend.Logger.Warn("reading upstream error body", "error", err)
+	}
+	return b
+}
+
+func closeBody(body io.Closer) {
+	if err := body.Close(); err != nil {
+		backend.Logger.Debug("closing response body", "error", err)
+	}
+}
 
 // attrPrefixRe matches VictoriaTraces typed-attribute prefixes such as
 // "span_attr:", "resource_attr:", "scope_attr:". It is used to identify
@@ -61,10 +77,9 @@ func (c *Client) Ping(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("executing request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer closeBody(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return parseAPIError(resp.StatusCode, body)
+		return parseAPIError(resp.StatusCode, readErrBody(resp.Body))
 	}
 	return nil
 }
@@ -182,8 +197,8 @@ func (c *Client) getStream(ctx context.Context, path string, params url.Values) 
 		return nil, fmt.Errorf("executing request: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		body := readErrBody(resp.Body)
+		closeBody(resp.Body)
 		return nil, parseAPIError(resp.StatusCode, body)
 	}
 	return resp.Body, nil
@@ -365,11 +380,10 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, out in
 	if err != nil {
 		return fmt.Errorf("executing request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer closeBody(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return parseAPIError(resp.StatusCode, body)
+		return parseAPIError(resp.StatusCode, readErrBody(resp.Body))
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {

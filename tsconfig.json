@@ -11,5 +11,15 @@
     "incremental": true,
     "tsBuildInfoFile": "./tsconfig.tsbuildinfo"
   },
-  "extends": "./.config/tsconfig.json"
+  "extends": "./.config/tsconfig.json",
+  "include": ["src/**/*", ".config/types/**/*.d.ts"],
+  "exclude": [
+    "node_modules",
+    "plugins",
+    "release",
+    "dist",
+    "coverage",
+    ".config/**",
+    "webpack.config.ts"
+  ]
 }
