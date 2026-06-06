@@ -19,7 +19,7 @@ export function useTimelineRulerMarks(
 
   useEffect(() => {
     const el = containerRef.current;
-    if (!el) return;
+    if (!el) {return;}
     const observer = new ResizeObserver((entries) => {
       setWidth(entries[0].contentRect.width);
     });

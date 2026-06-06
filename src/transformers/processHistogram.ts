@@ -70,7 +70,7 @@ function buildHeatmapFrame(frames: DataFrame[]): DataFrame {
   buckets.sort((a, b) => a.yMin - b.yMin);
 
   const timestampSet = new Set<number>();
-  const bucketTimestampMaps: Map<number, number>[] = [];
+  const bucketTimestampMaps: Array<Map<number, number>> = [];
   for (const bucket of buckets) {
     const tsMap = new Map<number, number>();
     bucket.timestamps.forEach((ts, idx) => {

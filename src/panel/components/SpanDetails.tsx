@@ -283,7 +283,7 @@ function ExpandableCell({ value, styles }: { value: string; styles: ReturnType<t
 // pane on every click would silently stack entries in the URL — only the
 // second-in-order is shown. So we keep the first pane (the trace view) and
 // always overwrite the second pane with the new correlation query.
-function openSplitPane(dsUid: string, queries: Record<string, unknown>[]) {
+function openSplitPane(dsUid: string, queries: Array<Record<string, unknown>>) {
   const search = locationService.getSearch();
   const dsSettings = getDataSourceSrv().getInstanceSettings(dsUid);
   const queriesWithDs = queries.map((q) => ({
@@ -403,7 +403,7 @@ export function SpanDetails({ trace, span, onClose, traceToLogs, traceToMetrics 
     ]);
   }, [traceToMetrics, span, trace]);
 
-  if (!span) return null;
+  if (!span) {return null;}
 
   const serviceName = span.processID && trace?.processes[span.processID]?.serviceName;
   const hasLogs = !!traceToLogs?.datasourceUid;

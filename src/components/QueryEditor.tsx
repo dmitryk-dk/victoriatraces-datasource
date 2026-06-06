@@ -113,7 +113,7 @@ function getCollapsedInfo(q: VictoriaTracesQuery): string[] {
 
 export function QueryEditor({ datasource, query, onChange, onRunQuery, data, app }: Props) {
   const styles = useStyles2(getStyles);
-  const q = { ...defaultQuery, ...query };
+  const q = useMemo(() => ({ ...defaultQuery, ...query }), [query]);
 
   useDefaultExploreGraph(app, EXPLORE_GRAPH_STYLES.BARS);
   useLogsSort(app, q, onChange, onRunQuery);

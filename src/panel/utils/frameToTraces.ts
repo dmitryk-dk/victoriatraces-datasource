@@ -2,7 +2,7 @@ import type { DataFrame } from '@grafana/data';
 import type { Trace, TraceKeyValue, TraceLog, TraceProcess, TraceSearchRow, TraceSpan, TraceSpanRef } from '../types';
 
 function parseJsonArray(value: unknown): unknown[] {
-  if (Array.isArray(value)) return value;
+  if (Array.isArray(value)) {return value;}
   if (typeof value === 'string' && value) {
     try {
       const parsed = JSON.parse(value);
@@ -23,7 +23,7 @@ export function fieldValues(frame: DataFrame, name: string): unknown[] {
  * Convert a Grafana 'traces' data frame (one row per span) into a Trace object.
  */
 export function traceFrameToTrace(frame: DataFrame): Trace | null {
-  if (!frame || frame.length === 0) return null;
+  if (!frame || frame.length === 0) {return null;}
 
   const traceIDs      = fieldValues(frame, 'traceID') as string[];
   const spanIDs       = fieldValues(frame, 'spanID') as string[];
@@ -88,7 +88,7 @@ export function traceFrameToTrace(frame: DataFrame): Trace | null {
  * Convert a Grafana 'trace_search' data frame (one row per trace) into TraceSearchRow[].
  */
 export function searchFrameToRows(frame: DataFrame): TraceSearchRow[] {
-  if (!frame || frame.length === 0) return [];
+  if (!frame || frame.length === 0) {return [];}
 
   const traceIDs     = fieldValues(frame, 'traceID') as string[];
   const traceNames   = fieldValues(frame, 'traceName') as string[];

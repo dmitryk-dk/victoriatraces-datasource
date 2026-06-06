@@ -21,7 +21,7 @@ export function formatDurationMs(ms: number): string {
  * Format a unix timestamp in milliseconds as a locale date+time string.
  */
 export function formatTimestampMs(ms: number): string {
-  if (!ms) return '';
+  if (!ms) {return '';}
   return new Date(ms).toLocaleString(undefined, {
     year: 'numeric',
     month: '2-digit',

@@ -22,7 +22,7 @@ function buildFlatTree(
   const childMap = new Map<string, TraceSpan[]>();
   for (const span of spans) {
     const parentID = span.references.find((r) => r.refType === 'CHILD_OF')?.spanID ?? '';
-    if (!childMap.has(parentID)) childMap.set(parentID, []);
+    if (!childMap.has(parentID)) {childMap.set(parentID, []);}
     childMap.get(parentID)!.push(span);
   }
 
@@ -249,8 +249,8 @@ export function TraceSpanTree({ trace, selectedSpanId, onSelectSpan }: TraceSpan
     (spanId: string) => {
       setExpandedIds((prev) => {
         const next = new Set(prev);
-        if (next.has(spanId)) next.delete(spanId);
-        else next.add(spanId);
+        if (next.has(spanId)) {next.delete(spanId);}
+        else {next.add(spanId);}
         return next;
       });
     },
