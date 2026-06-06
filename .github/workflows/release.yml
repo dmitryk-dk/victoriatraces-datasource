@@ -1,0 +1,158 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      skip_vuln_scan:
+        description: 'Skip OSV vulnerability scan'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  # Block the release if any HIGH/CRITICAL CVE is found in Go or npm deps.
+  # Runs first so we never publish artifacts with known-vulnerable libraries.
+  vuln-scan:
+    name: Vulnerability scan
+    if: ${{ inputs.skip_vuln_scan != true }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run OSV-Scanner
+        uses: google/osv-scanner-action/osv-scanner-action@v2.3.3
+        with:
+          scan-args: |-
+            --format=json
+            --output=osv-results.json
+            --recursive
+            ./
+
+      - name: Fail on HIGH/CRITICAL findings
+        run: |
+          if [ ! -f osv-results.json ]; then
+            echo "::notice::No vulnerabilities found"
+            exit 0
+          fi
+          high_critical=$(grep -o '"severity"[[:space:]]*:[[:space:]]*"\(HIGH\|CRITICAL\)"' osv-results.json | wc -l | tr -d ' ')
+          if [ "$high_critical" -gt 0 ]; then
+            echo "::error::Found $high_critical HIGH/CRITICAL vulnerabilities — see uploaded report"
+            exit 1
+          fi
+          echo "::notice::No HIGH/CRITICAL vulnerabilities found"
+
+      - name: Upload scan results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: osv-scan-results
+          path: osv-results.json
+          retention-days: 30
+
+  release:
+    name: Build and publish
+    needs: vuln-scan
+    # Continue when vuln-scan passed or was deliberately skipped via workflow_dispatch.
+    if: ${{ always() && (needs.vuln-scan.result == 'success' || needs.vuln-scan.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Resolve version from the tag (v1.2.3 → 1.2.3) and inject it into
+      # plugin.json + package.json so the published archive matches.
+      - name: Resolve version
+        id: version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          echo "version=$tag" >> "$GITHUB_OUTPUT"
+          echo "Releasing version $tag"
+
+      - name: Patch plugin.json version
+        run: |
+          tmp="$(mktemp)"
+          jq --arg v "${{ steps.version.outputs.version }}" \
+             --arg d "$(date -u +%Y-%m-%d)" \
+             '.info.version = $v | .info.updated = $d' \
+             src/plugin.json > "$tmp"
+          mv "$tmp" src/plugin.json
+          cat src/plugin.json | jq '.info.version, .info.updated'
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Frontend tests
+        run: npm run test:ci
+
+      - name: Backend tests
+        run: go test ./pkg/...
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Build backend (all platforms)
+        run: make vt-backend-plugin-build
+
+      # --- Grafana signing: disabled for now ---
+      # The plugin will ship unsigned until a Grafana access-policy token is set up.
+      # To re-enable: uncomment the step below and add a GRAFANA_ACCESS_POLICY_TOKEN
+      # repo secret (https://grafana.com/orgs/<your-org>/access-policies, scope plugins:write).
+      #
+      # - name: Sign plugin
+      #   env:
+      #     GRAFANA_ACCESS_POLICY_TOKEN: ${{ secrets.GRAFANA_ACCESS_POLICY_TOKEN }}
+      #   run: |
+      #     if [ -z "$GRAFANA_ACCESS_POLICY_TOKEN" ]; then
+      #       echo "::warning::GRAFANA_ACCESS_POLICY_TOKEN secret missing — producing unsigned build"
+      #       exit 0
+      #     fi
+      #     cd plugins/victoriatraces-datasource
+      #     npx --yes @grafana/sign-plugin@latest
+
+      # -o skips re-running the docker-based frontend build and the backend
+      # build — both already ran above. Only the pack step actually executes.
+      - name: Package release archives
+        run: |
+          make -o vt-frontend-plugin-build -o vt-backend-plugin-build \
+               vt-plugin-pack PKG_TAG=${{ steps.version.outputs.version }}
+
+      # --- Grafana plugin validator: disabled for now ---
+      # plugincheck2 is most useful once the plugin is signed and targeting the marketplace.
+      # Re-enable when getting close to Grafana submission.
+      #
+      # - name: Plugin validator (plugincheck2)
+      #   run: |
+      #     make -o vt-frontend-plugin-build -o vt-backend-plugin-build \
+      #          -o vt-plugin-pack vt-plugin-check \
+      #          PKG_TAG=${{ steps.version.outputs.version }}
+      #   continue-on-error: true # surface findings without blocking release
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/victoriatraces-datasource-${{ steps.version.outputs.version }}.zip
+            release/victoriatraces-datasource-${{ steps.version.outputs.version }}.tar.gz
+            release/victoriatraces-datasource-${{ steps.version.outputs.version }}_checksums_zip.txt
+            release/victoriatraces-datasource-${{ steps.version.outputs.version }}_checksums_tar.gz.txt
+          generate_release_notes: true
+          draft: true

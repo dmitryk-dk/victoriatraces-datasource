@@ -1,0 +1,108 @@
+name: CI / backend
+
+# Runs only when Go code, build config, or this workflow itself changes.
+# Frontend-only PRs skip this job entirely → fewer CI minutes, faster feedback.
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - '.github/workflows/ci-backend.yml'
+      - 'go.*'
+      - 'pkg/**'
+      - 'Magefile.go'
+      - 'Makefile'
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - '.github/workflows/ci-backend.yml'
+      - 'go.*'
+      - 'pkg/**'
+      - 'Magefile.go'
+      - 'Makefile'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache: true
+
+      - name: Verify go.mod is tidy
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
+      - name: gofmt check
+        run: |
+          out="$(gofmt -l ./pkg)"
+          if [ -n "$out" ]; then
+            echo "::error::gofmt found unformatted files:"
+            echo "$out"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./pkg/...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v2.2.2
+          args: ./pkg/...
+
+  test:
+    name: test (${{ matrix.scenario }})
+    needs: lint
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: [golang-test, golang-test-race]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache: true
+
+      - name: Run tests
+        run: make ${{ matrix.scenario }}
+
+  build:
+    name: build binaries
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache: true
+
+      - name: Build backend (all platforms)
+        run: make vt-backend-plugin-build
+
+      - name: Upload backend binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-${{ github.sha }}
+          path: plugins/victoriatraces-datasource
+          if-no-files-found: error
+          retention-days: 7

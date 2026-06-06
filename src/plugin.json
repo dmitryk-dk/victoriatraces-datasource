@@ -1,0 +1,64 @@
+{
+  "$schema": "https://raw.githubusercontent.com/grafana/grafana/main/docs/sources/developers/plugins/plugin.schema.json",
+  "type": "datasource",
+  "name": "VictoriaTraces",
+  "id": "victoriatraces-datasource",
+  "category": "tracing",
+  "backend": true,
+  "executable": "victoriatraces_backend_plugin",
+  "metrics": true,
+  "annotations": true,
+  "tracing": true,
+  "streaming": true,
+  "logs": true,
+  "info": {
+    "description": "Grafana datasource for VictoriaTraces — query and visualise traces, span search, trace-by-ID, LogsQL stats, node-graph dependency view, and trace-to-logs / trace-to-metrics correlations.",
+    "author": {
+      "name": "dmitryk-dk",
+      "url": "https://github.com/dmitryk-dk"
+    },
+    "keywords": [
+      "victoriatraces",
+      "victoriametrics",
+      "tracing",
+      "traces",
+      "jaeger",
+      "logsql",
+      "observability",
+      "distributed tracing",
+      "node graph"
+    ],
+    "logos": {
+      "small": "img/logo.svg",
+      "large": "img/logo.svg"
+    },
+    "screenshots": [],
+    "links": [
+      {
+        "name": "GitHub",
+        "url": "https://github.com/dmitryk-dk/victoriatraces-datasource"
+      },
+      {
+        "name": "Issues",
+        "url": "https://github.com/dmitryk-dk/victoriatraces-datasource/issues"
+      },
+      {
+        "name": "License",
+        "url": "https://github.com/dmitryk-dk/victoriatraces-datasource/blob/main/LICENSE"
+      },
+      {
+        "name": "Changelog",
+        "url": "https://github.com/dmitryk-dk/victoriatraces-datasource/blob/main/CHANGELOG.md"
+      },
+      {
+        "name": "VictoriaTraces",
+        "url": "https://docs.victoriametrics.com/victoriatraces/"
+      }
+    ],
+    "version": "1.0.0",
+    "updated": "2026-06-06"
+  },
+  "dependencies": {
+    "grafanaDependency": ">=10.4.0"
+  }
+}

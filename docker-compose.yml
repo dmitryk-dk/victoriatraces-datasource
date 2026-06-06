@@ -1,0 +1,45 @@
+services:
+  victoriatraces:
+    image: victoriametrics/victoria-traces:latest
+    ports:
+      - "10428:10428"
+      - "4317:4317"
+    command:
+      - "--storageDataPath=/storage"
+      - "--retentionPeriod=7d"
+      - "--otlpGRPCListenAddr=:4317"
+    volumes:
+      - victoriatraces-data:/storage
+    networks:
+      - plugin-network
+
+  grafana:
+    build:
+      context: .config
+      args:
+        grafana_version: latest
+        grafana_image: grafana
+        development: true
+    ports:
+      - "3000:3000"
+    environment:
+      GF_LOG_FILTERS: "plugin.victoriatraces-datasource:debug"
+      GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS: victoriatraces-datasource,victoriatraces-panel,victoriatraces-panel-graph
+    volumes:
+      - ./plugins/victoriatraces-datasource:/var/lib/grafana/plugins/victoriatraces-datasource
+      - ./plugins/victoriatraces-panel:/var/lib/grafana/plugins/victoriatraces-panel
+      - ./plugins/victoriatraces-panel-graph:/var/lib/grafana/plugins/victoriatraces-panel-graph
+      - ./provisioning:/etc/grafana/provisioning
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - victoriatraces
+    networks:
+      - plugin-network
+
+networks:
+  plugin-network:
+    driver: bridge
+
+volumes:
+  victoriatraces-data:
+  grafana-data:

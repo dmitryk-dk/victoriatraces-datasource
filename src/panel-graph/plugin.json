@@ -1,0 +1,20 @@
+{
+  "type": "panel",
+  "name": "Node graph",
+  "id": "victoriatraces-panel-graph",
+  "info": {
+    "version": "1.0.0",
+    "description": "Service dependency graph panel for VictoriaTraces",
+    "author": {
+      "name": "dmitryk-dk"
+    },
+    "logos": {
+      "small": "img/logo.svg",
+      "large": "img/logo.svg"
+    }
+  },
+  "dependencies": {
+    "grafanaDependency": ">=10.0.0"
+  }
+}
+

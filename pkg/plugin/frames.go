@@ -1,0 +1,423 @@
+package plugin
+
+import (
+	"encoding/json"
+	"fmt"
+	"sort"
+
+	"github.com/grafana/grafana-plugin-sdk-go/data"
+)
+
+// mustMarshal marshals v to JSON, returning an empty array on error.
+func mustMarshal(v interface{}) json.RawMessage {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return json.RawMessage("[]")
+	}
+	return json.RawMessage(b)
+}
+
+// kvToRaw converts a slice of JaegerKeyValue to a JSON-encoded array of {key, value} objects.
+func kvToRaw(kvs []JaegerKeyValue) json.RawMessage {
+	type kv struct {
+		Key   string      `json:"key"`
+		Value interface{} `json:"value"`
+	}
+	out := make([]kv, 0, len(kvs))
+	for _, item := range kvs {
+		out = append(out, kv{Key: item.Key, Value: item.Value})
+	}
+	return mustMarshal(out)
+}
+
+// logsToRaw converts span logs to a JSON-encoded array for Grafana's trace panel.
+func logsToRaw(logs []JaegerLog) json.RawMessage {
+	type logField struct {
+		Key   string      `json:"key"`
+		Value interface{} `json:"value"`
+	}
+	type logEntry struct {
+		Timestamp float64    `json:"timestamp"` // ms
+		Fields    []logField `json:"fields"`
+	}
+	out := make([]logEntry, 0, len(logs))
+	for _, l := range logs {
+		fields := make([]logField, 0, len(l.Fields))
+		for _, f := range l.Fields {
+			fields = append(fields, logField{Key: f.Key, Value: f.Value})
+		}
+		out = append(out, logEntry{Timestamp: float64(l.Timestamp) / 1000.0, Fields: fields})
+	}
+	return mustMarshal(out)
+}
+
+// refsToRaw converts FOLLOWS_FROM references to JSON (CHILD_OF is covered by parentSpanID).
+func refsToRaw(refs []JaegerReference) json.RawMessage {
+	type ref struct {
+		TraceID string `json:"traceID"`
+		SpanID  string `json:"spanID"`
+	}
+	out := make([]ref, 0)
+	for _, r := range refs {
+		if r.RefType == "CHILD_OF" {
+			continue
+		}
+		out = append(out, ref{TraceID: r.TraceID, SpanID: r.SpanID})
+	}
+	return mustMarshal(out)
+}
+
+// TracesToFrame converts a slice of JaegerTraces into a Grafana data frame
+// suitable for the Grafana traces panel (full span-level detail).
+// Field types must match what Grafana's TraceView expects:
+// - startTime/duration: float64 (FieldType.number), NOT int64
+// - tags/serviceTags/logs/references: json.RawMessage (FieldType.other)
+func TracesToFrame(traces []JaegerTrace) *data.Frame {
+	var (
+		traceIDs       []string
+		spanIDs        []string
+		parentSpanIDs  []string
+		operationNames []string
+		serviceNames   []string
+		startTimes     []float64
+		durations      []float64
+		tags           []json.RawMessage
+		serviceTags    []json.RawMessage
+		logs           []json.RawMessage
+		references     []json.RawMessage
+	)
+
+	for _, trace := range traces {
+		for _, span := range trace.Spans {
+			process, ok := trace.Processes[span.ProcessID]
+			if !ok {
+				process = JaegerProcess{ServiceName: "unknown"}
+			}
+
+			parentSpanID := ""
+			for _, ref := range span.References {
+				if ref.RefType == "CHILD_OF" {
+					parentSpanID = ref.SpanID
+					break
+				}
+			}
+
+			traceIDs = append(traceIDs, span.TraceID)
+			spanIDs = append(spanIDs, span.SpanID)
+			parentSpanIDs = append(parentSpanIDs, parentSpanID)
+			operationNames = append(operationNames, span.OperationName)
+			serviceNames = append(serviceNames, process.ServiceName)
+			// Convert microseconds → milliseconds for Grafana (float64 = FieldType.number)
+			startTimes = append(startTimes, float64(span.StartTime)/1000.0)
+			durations = append(durations, float64(span.Duration)/1000.0)
+			tags = append(tags, kvToRaw(span.Tags))
+			serviceTags = append(serviceTags, kvToRaw(process.Tags))
+			logs = append(logs, logsToRaw(span.Logs))
+			references = append(references, refsToRaw(span.References))
+		}
+	}
+
+	frame := data.NewFrame("traces",
+		data.NewField("traceID", nil, traceIDs),
+		data.NewField("spanID", nil, spanIDs),
+		data.NewField("parentSpanID", nil, parentSpanIDs),
+		data.NewField("operationName", nil, operationNames),
+		data.NewField("serviceName", nil, serviceNames),
+		data.NewField("serviceTags", nil, serviceTags),
+		data.NewField("startTime", nil, startTimes),
+		data.NewField("duration", nil, durations),
+		data.NewField("logs", nil, logs),
+		data.NewField("references", nil, references),
+		data.NewField("tags", nil, tags),
+	)
+
+	// Render in our custom panel. Using "trace" PreferredVisualization
+	// puts this in a separate panel section from nodeGraph frames.
+	frame.SetMeta(&data.FrameMeta{
+		PreferredVisualization:         "trace",
+		PreferredVisualizationPluginID: "victoriatraces-panel",
+	})
+
+	return frame
+}
+
+// TraceSearchResultToFrame builds a summary frame for trace search results —
+// one row per trace, used in Explore's trace list view.
+// Field names match what Grafana's Explore trace search panel expects (same as Tempo).
+func TraceSearchResultToFrame(traces []JaegerTrace) *data.Frame {
+	var (
+		traceIDs           []string
+		traceNames         []string
+		rootServiceNames   []string
+		rootOperationNames []string
+		startTimes         []float64
+		durationMs         []float64
+		spanCounts         []int64
+		errorCounts        []int64
+	)
+
+	for _, trace := range traces {
+		if len(trace.Spans) == 0 {
+			continue
+		}
+
+		root := findRootSpan(trace)
+
+		process, ok := trace.Processes[root.ProcessID]
+		if !ok {
+			process = JaegerProcess{ServiceName: "unknown"}
+		}
+
+		// Compute overall trace bounds across all spans
+		minStart := root.StartTime
+		maxEnd := root.StartTime + root.Duration
+		for _, s := range trace.Spans {
+			if s.StartTime < minStart {
+				minStart = s.StartTime
+			}
+			if end := s.StartTime + s.Duration; end > maxEnd {
+				maxEnd = end
+			}
+		}
+
+		var errCount int64
+		for _, s := range trace.Spans {
+			if spanHasError(s) {
+				errCount++
+			}
+		}
+
+		traceIDs = append(traceIDs, trace.TraceID)
+		traceNames = append(traceNames, fmt.Sprintf("%s: %s", process.ServiceName, root.OperationName))
+		rootServiceNames = append(rootServiceNames, process.ServiceName)
+		rootOperationNames = append(rootOperationNames, root.OperationName)
+		startTimes = append(startTimes, float64(minStart)/1000.0) // µs → ms
+		durationMs = append(durationMs, float64(maxEnd-minStart)/1000.0)
+		spanCounts = append(spanCounts, int64(len(trace.Spans)))
+		errorCounts = append(errorCounts, errCount)
+	}
+
+	frame := data.NewFrame("trace_search",
+		data.NewField("traceID", nil, traceIDs),
+		data.NewField("traceName", nil, traceNames),
+		data.NewField("rootServiceName", nil, rootServiceNames),
+		data.NewField("rootTraceName", nil, rootOperationNames),
+		data.NewField("startTime", nil, startTimes),
+		data.NewField("traceDuration", nil, durationMs),
+		data.NewField("spanCount", nil, spanCounts),
+		data.NewField("errorCount", nil, errorCounts),
+	)
+
+	frame.SetMeta(&data.FrameMeta{
+		PreferredVisualization:         "trace",
+		PreferredVisualizationPluginID: "victoriatraces-panel",
+	})
+
+	return frame
+}
+
+// findRootSpan returns the root span of a trace (the span with no CHILD_OF reference).
+func findRootSpan(trace JaegerTrace) JaegerSpan {
+	root := trace.Spans[0]
+	for _, s := range trace.Spans {
+		hasParent := false
+		for _, ref := range s.References {
+			if ref.RefType == "CHILD_OF" {
+				hasParent = true
+				break
+			}
+		}
+		if !hasParent {
+			root = s
+			break
+		}
+	}
+	return root
+}
+
+// serviceForSpan returns the service name for the given span ID within a trace.
+func serviceForSpan(trace JaegerTrace, spanID string) string {
+	for _, s := range trace.Spans {
+		if s.SpanID == spanID {
+			if p, ok := trace.Processes[s.ProcessID]; ok {
+				return p.ServiceName
+			}
+			return "unknown"
+		}
+	}
+	return ""
+}
+
+// spanHasError returns true if a span has error=true in its tags.
+func spanHasError(span JaegerSpan) bool {
+	for _, tag := range span.Tags {
+		if tag.Key == "error" {
+			switch v := tag.Value.(type) {
+			case bool:
+				return v
+			case string:
+				return v == "true"
+			}
+		}
+	}
+	return false
+}
+
+// nodeGraphStats holds per-service aggregated stats for the node graph.
+type nodeGraphStats struct {
+	totalDuration int64
+	spanCount     int64
+	errorCount    int64
+}
+
+// edgeKey uniquely identifies a directed edge between two services.
+type edgeKey struct {
+	source, target string
+}
+
+// edgeGraphStats holds per-edge aggregated stats for the node graph.
+type edgeGraphStats struct {
+	totalDuration int64
+	callCount     int64
+	errorCount    int64
+}
+
+// TraceToNodeGraphFrames converts a slice of JaegerTraces into Grafana node-graph
+// data frames (nodes + edges). Nodes are services, edges are calls between services.
+// This provides the Tempo/Jaeger-like service dependency graph when viewing a trace.
+func TraceToNodeGraphFrames(traces []JaegerTrace) (*data.Frame, *data.Frame) {
+	services := make(map[string]*nodeGraphStats)
+	edges := make(map[edgeKey]*edgeGraphStats)
+
+	for _, trace := range traces {
+		for _, span := range trace.Spans {
+			process, ok := trace.Processes[span.ProcessID]
+			if !ok {
+				process = JaegerProcess{ServiceName: "unknown"}
+			}
+			svcName := process.ServiceName
+
+			if _, exists := services[svcName]; !exists {
+				services[svcName] = &nodeGraphStats{}
+			}
+			services[svcName].totalDuration += span.Duration
+			services[svcName].spanCount++
+			if spanHasError(span) {
+				services[svcName].errorCount++
+			}
+
+			// Build edges from CHILD_OF references
+			for _, ref := range span.References {
+				if ref.RefType != "CHILD_OF" {
+					continue
+				}
+				parentSvc := serviceForSpan(trace, ref.SpanID)
+				if parentSvc == "" || parentSvc == svcName {
+					continue
+				}
+				key := edgeKey{source: parentSvc, target: svcName}
+				if _, exists := edges[key]; !exists {
+					edges[key] = &edgeGraphStats{}
+				}
+				edges[key].callCount++
+				edges[key].totalDuration += span.Duration
+				if spanHasError(span) {
+					edges[key].errorCount++
+				}
+			}
+		}
+	}
+
+	// --- Nodes frame ---
+	// Sort service names so frame ordering is deterministic across requests.
+	svcNames := make([]string, 0, len(services))
+	for svc := range services {
+		svcNames = append(svcNames, svc)
+	}
+	sort.Strings(svcNames)
+
+	nodeIDs := make([]string, 0, len(svcNames))
+	nodeTitles := make([]string, 0, len(svcNames))
+	nodeSubtitles := make([]string, 0, len(svcNames))
+	nodeMainStats := make([]float64, 0, len(svcNames))
+	nodeSecStats := make([]float64, 0, len(svcNames))
+	nodeArcSuccess := make([]float64, 0, len(svcNames))
+	nodeArcError := make([]float64, 0, len(svcNames))
+	for _, svc := range svcNames {
+		stats := services[svc]
+		nodeIDs = append(nodeIDs, svc)
+		nodeTitles = append(nodeTitles, svc)
+		nodeSubtitles = append(nodeSubtitles, fmt.Sprintf("%d spans", stats.spanCount))
+		if stats.spanCount > 0 {
+			avgMs := float64(stats.totalDuration) / float64(stats.spanCount) / 1000.0
+			nodeMainStats = append(nodeMainStats, avgMs)
+		} else {
+			nodeMainStats = append(nodeMainStats, 0)
+		}
+		nodeSecStats = append(nodeSecStats, float64(stats.spanCount))
+		errRate := float64(0)
+		if stats.spanCount > 0 {
+			errRate = float64(stats.errorCount) / float64(stats.spanCount)
+		}
+		nodeArcSuccess = append(nodeArcSuccess, 1-errRate)
+		nodeArcError = append(nodeArcError, errRate)
+	}
+
+	nodesFrame := data.NewFrame("nodes",
+		data.NewField("id", nil, nodeIDs),
+		data.NewField("title", nil, nodeTitles),
+		data.NewField("subtitle", nil, nodeSubtitles),
+		data.NewField("mainstat", nil, nodeMainStats).SetConfig(&data.FieldConfig{DisplayName: "Avg duration (ms)"}),
+		data.NewField("secondarystat", nil, nodeSecStats).SetConfig(&data.FieldConfig{DisplayName: "Spans"}),
+		data.NewField("arc__success", nil, nodeArcSuccess).SetConfig(&data.FieldConfig{DisplayName: "Success", Color: map[string]interface{}{"mode": "fixed", "fixedColor": "green"}}),
+		data.NewField("arc__errors", nil, nodeArcError).SetConfig(&data.FieldConfig{DisplayName: "Errors", Color: map[string]interface{}{"mode": "fixed", "fixedColor": "red"}}),
+	)
+	nodesFrame.SetMeta(&data.FrameMeta{
+		PreferredVisualization:         "nodeGraph",
+		PreferredVisualizationPluginID: "victoriatraces-panel-graph",
+	})
+
+	// --- Edges frame ---
+	edgeKeys := make([]edgeKey, 0, len(edges))
+	for k := range edges {
+		edgeKeys = append(edgeKeys, k)
+	}
+	sort.Slice(edgeKeys, func(i, j int) bool {
+		if edgeKeys[i].source != edgeKeys[j].source {
+			return edgeKeys[i].source < edgeKeys[j].source
+		}
+		return edgeKeys[i].target < edgeKeys[j].target
+	})
+
+	edgeIDs := make([]string, 0, len(edgeKeys))
+	edgeSources := make([]string, 0, len(edgeKeys))
+	edgeTargets := make([]string, 0, len(edgeKeys))
+	edgeMainStats := make([]float64, 0, len(edgeKeys))
+	edgeSecStats := make([]float64, 0, len(edgeKeys))
+	for _, key := range edgeKeys {
+		stats := edges[key]
+		edgeIDs = append(edgeIDs, fmt.Sprintf("%s--%s", key.source, key.target))
+		edgeSources = append(edgeSources, key.source)
+		edgeTargets = append(edgeTargets, key.target)
+		if stats.callCount > 0 {
+			edgeMainStats = append(edgeMainStats, float64(stats.totalDuration)/float64(stats.callCount)/1000.0)
+		} else {
+			edgeMainStats = append(edgeMainStats, 0)
+		}
+		edgeSecStats = append(edgeSecStats, float64(stats.callCount))
+	}
+
+	edgesFrame := data.NewFrame("edges",
+		data.NewField("id", nil, edgeIDs),
+		data.NewField("source", nil, edgeSources),
+		data.NewField("target", nil, edgeTargets),
+		data.NewField("mainstat", nil, edgeMainStats).SetConfig(&data.FieldConfig{DisplayName: "Avg duration (ms)"}),
+		data.NewField("secondarystat", nil, edgeSecStats).SetConfig(&data.FieldConfig{DisplayName: "Calls"}),
+	)
+	edgesFrame.SetMeta(&data.FrameMeta{
+		PreferredVisualization:         "nodeGraph",
+		PreferredVisualizationPluginID: "victoriatraces-panel-graph",
+	})
+
+	return nodesFrame, edgesFrame
+}

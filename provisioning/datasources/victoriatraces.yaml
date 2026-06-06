@@ -1,0 +1,9 @@
+apiVersion: 1
+
+datasources:
+  - name: VictoriaTraces
+    type: victoriatraces-datasource
+    access: proxy
+    url: http://victoriatraces:10428
+    isDefault: true
+    editable: true

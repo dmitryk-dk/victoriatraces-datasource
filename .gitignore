@@ -1,0 +1,38 @@
+# Build artifacts
+plugins/
+release/
+bin/
+
+# Go
+go.sum
+vendor/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# TypeScript
+tsconfig.tsbuildinfo
+
+# Docker build caches
+.cache/
+.npm/
+
+# Docker volumes
+victoriatraces-data/
+grafana-data/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Claude Code / AI tooling
+.claude/
+.agents/
+CLAUDE.md
+PLAN.md
+skills-lock.json
+
+# OS
+.DS_Store

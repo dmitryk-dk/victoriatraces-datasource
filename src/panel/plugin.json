@@ -1,0 +1,19 @@
+{
+  "type": "panel",
+  "name": "VictoriaTraces",
+  "id": "victoriatraces-panel",
+  "info": {
+    "version": "1.0.0",
+    "description": "Custom traces visualization panel for VictoriaTraces",
+    "author": {
+      "name": "dmitryk-dk"
+    },
+    "logos": {
+      "small": "img/logo.svg",
+      "large": "img/logo.svg"
+    }
+  },
+  "dependencies": {
+    "grafanaDependency": ">=10.0.0"
+  }
+}
