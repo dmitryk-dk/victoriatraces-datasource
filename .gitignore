@@ -3,10 +3,6 @@ plugins/
 release/
 bin/
 
-# Go
-go.sum
-vendor/
-
 # Node
 node_modules/
 npm-debug.log*

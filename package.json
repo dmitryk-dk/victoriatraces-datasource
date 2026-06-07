@@ -62,6 +62,9 @@
     "webpack-subresource-integrity": "^5.2.0-rc.1",
     "webpack-virtual-modules": "^0.6.2"
   },
+  "overrides": {
+    "ajv": "^8.12.0"
+  },
   "dependencies": {
     "@dagrejs/dagre": "^1.1.4",
     "@grafana/data": "^12.4.1",

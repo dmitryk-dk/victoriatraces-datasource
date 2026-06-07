@@ -12,7 +12,7 @@
     "tsBuildInfoFile": "./tsconfig.tsbuildinfo"
   },
   "extends": "./.config/tsconfig.json",
-  "include": ["src/**/*", ".config/types/**/*.d.ts"],
+  "include": ["src/**/*"],
   "exclude": [
     "node_modules",
     "plugins",
