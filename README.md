@@ -124,7 +124,7 @@ Useful flags:
 | `-storageDataPath` | `victoria-traces-data` | Where traces live on disk |
 | `-retentionPeriod` | `7d` | How long traces are kept |
 
-VictoriaTraces only ingests OTLP - full details in the
+VictoriaTraces accepts traces via OTLP - full details in the
 [data ingestion docs](https://docs.victoriametrics.com/victoriatraces/data-ingestion/).
 The Jaeger API in VT is on the read side only; the plugin uses it to fetch traces, but you
 can't send Jaeger spans in.
@@ -388,7 +388,7 @@ starting point if you don't want to design one from scratch.
 
 ### Sending traces in
 
-Ingestion is OTLP only - gRPC on `4317` or HTTP on `10428` at
+Ingestion is via OTLP - gRPC on `4317` or HTTP on `10428` at
 `/insert/opentelemetry/v1/traces`. Any OTLP-compatible client works; the OpenTelemetry Collector
 is the quickest path:
 
