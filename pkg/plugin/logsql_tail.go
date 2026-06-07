@@ -73,18 +73,20 @@ func parseTailStream(ctx context.Context, reader io.Reader, ch chan<- *data.Fram
 		case errors.Is(err, bufio.ErrBufferFull):
 			backend.Logger.Debug("skipping tail line: too long", "lineNumber", n)
 			continue
-		case errors.Is(err, io.EOF):
+		case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
 			if len(b) == 0 {
 				return nil
 			}
 			// Fall through and process the trailing fragment, then exit.
+		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+			return nil
 		case err != nil:
 			return fmt.Errorf("reading tail line: %w", err)
 		}
 
 		b = bytes.TrimRight(b, "\n")
 		if len(b) == 0 {
-			if errors.Is(err, io.EOF) {
+			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 				return nil
 			}
 			continue
@@ -93,7 +95,7 @@ func parseTailStream(ctx context.Context, reader io.Reader, ch chan<- *data.Fram
 		value, parseErr := parser.ParseBytes(b)
 		if parseErr != nil {
 			backend.Logger.Warn("decoding tail line", "error", parseErr)
-			if errors.Is(err, io.EOF) {
+			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 				return nil
 			}
 			continue
@@ -102,7 +104,7 @@ func parseTailStream(ctx context.Context, reader io.Reader, ch chan<- *data.Fram
 		frame, fErr := tailLineToFrame(value)
 		if fErr != nil {
 			backend.Logger.Warn("building tail frame", "error", fErr)
-			if errors.Is(err, io.EOF) {
+			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 				return nil
 			}
 			continue

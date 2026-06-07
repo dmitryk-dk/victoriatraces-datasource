@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -13,6 +14,13 @@ import (
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/data"
 )
+
+func cancelledResponse(ctx context.Context, err error) (backend.DataResponse, bool) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
+		return backend.DataResponse{}, true
+	}
+	return backend.DataResponse{}, false
+}
 
 const (
 	queryTypeSearch        = "search"
@@ -72,6 +80,9 @@ func (d *Datasource) queryTrace(ctx context.Context, qm queryModel) backend.Data
 
 	resp, err := d.client.GetTrace(ctx, qm.TraceID)
 	if err != nil {
+		if r, ok := cancelledResponse(ctx, err); ok {
+			return r
+		}
 		if IsNotFound(err) {
 			return backend.ErrDataResponse(backend.StatusNotFound, fmt.Sprintf("trace %q not found — it may have expired or not yet been ingested", qm.TraceID))
 		}
@@ -102,6 +113,9 @@ func (d *Datasource) queryLogsQL(ctx context.Context, query backend.DataQuery, q
 
 	resp, err := d.client.QueryLogsQLRange(ctx, expr, query.TimeRange.From, query.TimeRange.To, step, qm.TimezoneOffset)
 	if err != nil {
+		if r, ok := cancelledResponse(ctx, err); ok {
+			return r
+		}
 		return backend.ErrDataResponse(backend.StatusInternal, fmt.Sprintf("logsql query: %v", err))
 	}
 	if resp.Status != "success" {
@@ -133,6 +147,9 @@ func (d *Datasource) queryLogsQLInstant(ctx context.Context, query backend.DataQ
 
 	resp, err := d.client.QueryLogsQLInstant(ctx, expr, query.TimeRange.To, qm.TimezoneOffset)
 	if err != nil {
+		if r, ok := cancelledResponse(ctx, err); ok {
+			return r
+		}
 		return backend.ErrDataResponse(backend.StatusInternal, fmt.Sprintf("logsql instant query: %v", err))
 	}
 	if resp.Status != "success" {
@@ -163,6 +180,9 @@ func (d *Datasource) queryLogsQLLogs(ctx context.Context, query backend.DataQuer
 
 	body, err := d.client.QueryLogsQLLogs(ctx, expr, query.TimeRange.From, query.TimeRange.To, limit, qm.TimezoneOffset)
 	if err != nil {
+		if r, ok := cancelledResponse(ctx, err); ok {
+			return r
+		}
 		return backend.ErrDataResponse(backend.StatusInternal, fmt.Sprintf("logsql logs query: %v", err))
 	}
 	defer closeBody(body)
@@ -184,6 +204,9 @@ func (d *Datasource) queryLogsQLHits(ctx context.Context, query backend.DataQuer
 
 	body, err := d.client.QueryLogsQLHits(ctx, expr, query.TimeRange.From, query.TimeRange.To, step, qm.TimezoneOffset, qm.Fields)
 	if err != nil {
+		if r, ok := cancelledResponse(ctx, err); ok {
+			return r
+		}
 		return backend.ErrDataResponse(backend.StatusInternal, fmt.Sprintf("logsql hits query: %v", err))
 	}
 	defer closeBody(body)
@@ -529,6 +552,9 @@ func (d *Datasource) querySearch(ctx context.Context, query backend.DataQuery, q
 		Limit:     limit,
 	})
 	if err != nil {
+		if r, ok := cancelledResponse(ctx, err); ok {
+			return r
+		}
 		return backend.ErrDataResponse(backend.StatusInternal, fmt.Sprintf("searching traces: %v", err))
 	}
 
