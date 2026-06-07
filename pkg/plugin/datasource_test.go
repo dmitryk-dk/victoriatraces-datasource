@@ -48,6 +48,9 @@ func (m *mockClient) QueryLogsQLLogs(_ context.Context, _ string, _, _ time.Time
 func (m *mockClient) QueryLogsQLHits(_ context.Context, _ string, _, _ time.Time, _, _ string, _ []string) (io.ReadCloser, error) {
 	return nil, m.err
 }
+func (m *mockClient) QueryLogsQLTail(_ context.Context, _ string) (io.ReadCloser, error) {
+	return nil, m.err
+}
 func (m *mockClient) GetFieldNames(_ context.Context, _, _ string) (*FieldNamesResponse, error) {
 	return &FieldNamesResponse{}, m.err
 }

@@ -9,6 +9,7 @@ import {
   SelectableValue,
 } from '@grafana/data';
 import {
+  Alert,
   AutoSizeInput,
   Button,
   Field,
@@ -19,7 +20,7 @@ import {
   useStyles2,
 } from '@grafana/ui';
 
-import { DataSource } from '../datasource';
+import { DataSource, isTailableExpr } from '../datasource';
 import { notifyError } from '../notify';
 import { defaultQuery, QueryType, VictoriaTracesOptions, VictoriaTracesQuery } from '../types';
 import { MonacoQueryFieldWrapper } from './monaco-query-field/MonacoQueryFieldWrapper';
@@ -336,9 +337,18 @@ export function QueryEditor({ datasource, query, onChange, onRunQuery, data, app
             onChange={onExprChange}
             onRunQuery={onRunQuery}
             initialValue={q.expr ?? ''}
-            placeholder="Enter a LogsQL expression, e.g.  * | stats by (resource_attr:service.name) count() requests"
+            placeholder='Enter a LogsQL expression, e.g.  * | stats by ("resource_attr:service.name") count() requests'
             runQueryOnBlur
           />
+
+          {q.queryType === 'logsql-logs' && q.expr && !isTailableExpr(q.expr) && (
+            <Alert severity="info" title="This query cannot be live-tailed">
+              Live tailing rejects pipes that aggregate, reorder, or paginate logs:{' '}
+              <code>stats</code>, <code>uniq</code>, <code>top</code>, <code>sort</code>,{' '}
+              <code>limit</code>, <code>offset</code>. Remove them to enable live tail, or
+              run the query without live mode.
+            </Alert>
+          )}
 
           {/* Collapsible Options row */}
           <EditorRow>

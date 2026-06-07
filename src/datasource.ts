@@ -4,13 +4,15 @@ import {
   DataQueryResponse,
   DataSourceInstanceSettings,
   FieldType,
+  LiveChannelScope,
+  LoadingState,
   ScopedVars,
   SupplementaryQueryOptions,
   SupplementaryQueryType,
 } from '@grafana/data';
-import { DataSourceWithBackend, getTemplateSrv } from '@grafana/runtime';
+import { DataSourceWithBackend, getGrafanaLiveSrv, getTemplateSrv } from '@grafana/runtime';
 import { cloneDeep } from 'lodash';
-import { Observable } from 'rxjs';
+import { merge, Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
 import { extractLogsQLFilter, getLogsVolumeStep, queryLogsVolume } from './logsVolume';
 import { transformResponse } from './transformers/transform';
@@ -106,6 +108,15 @@ export class DataSource extends DataSourceWithBackend<VictoriaTracesQuery, Victo
       return q;
     });
 
+    // Live tail is logs-only — search/traceId/stats queries have no "tail"
+    // semantic. The /select/logsql/tail endpoint additionally rejects pipes
+    // (`| stats`, `| sort`, ...) with a 400; the backend's RunStream handles
+    // that case by emitting an error notice and returning nil so Grafana
+    // doesn't retry forever.
+    if (request.liveStreaming && targets.some((q) => q.queryType === 'logsql-logs')) {
+      return this.runLiveQueryThroughBackend({ ...request, targets });
+    }
+
     const derivedFields = this.derivedFields;
     const nodeGraphEnabled = this.nodeGraph.enabled;
     const uid = this.uid;
@@ -149,6 +160,38 @@ export class DataSource extends DataSourceWithBackend<VictoriaTracesQuery, Victo
         return transformResponse(filtered, { ...request, targets }, derivedFields, { uid, name });
       })
     );
+  }
+
+  // runLiveQueryThroughBackend opens a Grafana Live channel per logs target.
+  // The backend's StreamHandler is wired to the channel path
+  // `${requestId}/${refId}` and writes one frame per /select/logsql/tail line.
+  // Non-logs targets in the same request are dropped intentionally — Explore's
+  // live mode is logs-only on the UI side.
+  private runLiveQueryThroughBackend(
+    request: DataQueryRequest<VictoriaTracesQuery>
+  ): Observable<DataQueryResponse> {
+    const uid = this.uid;
+    const observables = request.targets
+      .filter((q) => q.queryType === 'logsql-logs' && !q.hide)
+      .map((query) => {
+        return getGrafanaLiveSrv()
+          .getDataStream({
+            addr: {
+              scope: LiveChannelScope.DataSource,
+              stream: uid,
+              path: `${request.requestId}/${query.refId}`,
+              data: { ...query },
+            },
+          })
+          .pipe(
+            map((response) => ({
+              data: response.data ?? [],
+              key: `victoriatraces-datasource-${request.requestId}-${query.refId}`,
+              state: LoadingState.Streaming,
+            }))
+          );
+      });
+    return merge(...observables);
   }
 
   getDefaultQuery(app: CoreApp): Partial<VictoriaTracesQuery> {
@@ -277,6 +320,54 @@ export class DataSource extends DataSourceWithBackend<VictoriaTracesQuery, Victo
       (e) => { e ? this.fieldValuesCache.set(key, e) : this.fieldValuesCache.delete(key); }
     );
   }
+}
+
+// TAIL_DISALLOWED_PIPES are the LogsQL pipe names rejected by
+// /select/logsql/tail per
+// https://docs.victoriametrics.com/victorialogs/querying/#live-tailing —
+// aggregations, reordering, and pagination cannot be applied to an
+// unbounded stream. Other pipes (`fields`, `filter`, `extract`, ...) work.
+const TAIL_DISALLOWED_PIPES = ['stats', 'uniq', 'top', 'sort', 'limit', 'offset'] as const;
+
+// isTailableExpr returns true if a LogsQL expression is valid for live
+// tailing. We scan for unquoted `| <name>` segments and reject if any name
+// matches one of the disallowed pipes. Quoted strings (single, double,
+// backtick) are skipped so a literal pipe inside a value can't trigger a
+// false positive.
+export function isTailableExpr(expr: string | undefined): boolean {
+  if (!expr) {
+    return false;
+  }
+  // Strip quoted regions, then look for `| stats`, `| sort`, etc. with
+  // word boundaries so substrings like `tops` don't match `top`.
+  let stripped = '';
+  let inSingle = false;
+  let inDouble = false;
+  let inBacktick = false;
+  for (let i = 0; i < expr.length; i++) {
+    const ch = expr[i];
+    if (ch === '\\' && (inSingle || inDouble || inBacktick)) {
+      i++;
+      continue;
+    }
+    if (!inDouble && !inBacktick && ch === "'") {
+      inSingle = !inSingle;
+      continue;
+    }
+    if (!inSingle && !inBacktick && ch === '"') {
+      inDouble = !inDouble;
+      continue;
+    }
+    if (!inSingle && !inDouble && ch === '`') {
+      inBacktick = !inBacktick;
+      continue;
+    }
+    if (!inSingle && !inDouble && !inBacktick) {
+      stripped += ch;
+    }
+  }
+  const badPipe = new RegExp(`\\|\\s*(${TAIL_DISALLOWED_PIPES.join('|')})\\b`, 'i');
+  return !badPipe.test(stripped);
 }
 
 function calcTimezoneOffset(timezone: string, utcOffsetMinutes: number): string | undefined {

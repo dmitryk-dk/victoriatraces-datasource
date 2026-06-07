@@ -374,7 +374,7 @@ starting point if you don't want to design one from scratch.
 
      ![LogsQL query mode with Monaco editor and time series](docs/screenshots/query-editor-logsql.png)
      <!-- QueryEditor in LogsQL mode: Monaco editor with a non-trivial expression
-          (e.g. `* | stats by (resource_attr:service.name) count() requests`), the Type
+          (e.g. `* | stats by ("resource_attr:service.name") count() requests`), the Type
           radio (Raw Logs / Range / Instant) visible in the collapsible Options group,
           and the panel below rendering the result. -->
 

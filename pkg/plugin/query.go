@@ -165,7 +165,7 @@ func (d *Datasource) queryLogsQLLogs(ctx context.Context, query backend.DataQuer
 	if err != nil {
 		return backend.ErrDataResponse(backend.StatusInternal, fmt.Sprintf("logsql logs query: %v", err))
 	}
-	defer body.Close()
+	defer closeBody(body)
 
 	return parseLogsResponse(body)
 }
@@ -186,7 +186,7 @@ func (d *Datasource) queryLogsQLHits(ctx context.Context, query backend.DataQuer
 	if err != nil {
 		return backend.ErrDataResponse(backend.StatusInternal, fmt.Sprintf("logsql hits query: %v", err))
 	}
-	defer body.Close()
+	defer closeBody(body)
 
 	return parseHitsResponse(body)
 }

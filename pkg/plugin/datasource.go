@@ -3,17 +3,20 @@ package plugin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/backend/httpclient"
 	"github.com/grafana/grafana-plugin-sdk-go/backend/instancemgmt"
+	"github.com/grafana/grafana-plugin-sdk-go/data"
 )
 
 // victoriaTracesClient is the interface the Datasource uses to talk to
@@ -30,12 +33,37 @@ type victoriaTracesClient interface {
 	QueryLogsQLInstant(ctx context.Context, expr string, t time.Time, offset string) (*LogsQLResponse, error)
 	QueryLogsQLLogs(ctx context.Context, expr string, start, end time.Time, limit int, offset string) (io.ReadCloser, error)
 	QueryLogsQLHits(ctx context.Context, expr string, start, end time.Time, step, offset string, fields []string) (io.ReadCloser, error)
+	QueryLogsQLTail(ctx context.Context, expr string) (io.ReadCloser, error)
 }
+
+// Ensure Datasource implements the backend.StreamHandler interface so the SDK
+// wires up Subscribe/Publish/Run calls when the frontend opens a Live channel.
+var (
+	_ backend.QueryDataHandler    = (*Datasource)(nil)
+	_ backend.CheckHealthHandler  = (*Datasource)(nil)
+	_ backend.CallResourceHandler = (*Datasource)(nil)
+	_ backend.StreamHandler       = (*Datasource)(nil)
+)
 
 // Datasource implements the Grafana backend datasource interfaces.
 type Datasource struct {
 	client     victoriaTracesClient
 	httpClient *http.Client
+
+	// streamClient is a timeout-less HTTP client used only for live-tail
+	// requests against /select/logsql/tail. The endpoint streams forever, so
+	// the regular httpClient's response timeout would cut the connection.
+	streamClient *http.Client
+	// tailClient wraps streamClient with the same base URL as the main client
+	// and exposes only QueryLogsQLTail.
+	tailClient victoriaTracesClient
+
+	// liveChannels isolates frame streams per Live channel path
+	// (`${requestId}/${refId}`). Two browser tabs use different requestIds
+	// so each gets its own upstream tail connection — without this map
+	// they would race over a shared sender. Dispose closes any in-flight
+	// channels here so blocked goroutines can exit on instance replacement.
+	liveChannels sync.Map
 }
 
 // datasourceSettings mirrors the JSON stored in the datasource configuration.
@@ -74,17 +102,42 @@ func NewDatasource(ctx context.Context, settings backend.DataSourceInstanceSetti
 		return nil, fmt.Errorf("creating http client: %w", err)
 	}
 
+	// Live tail responses stream indefinitely. Build a second client with
+	// the same auth/TLS/proxy plumbing but no response timeout, otherwise
+	// the regular client would terminate the connection. Copy the existing
+	// timeout struct so dial/keepalive/handshake budgets are preserved.
+	streamOpts := opts
+	to := httpclient.DefaultTimeoutOptions
+	if opts.Timeouts != nil {
+		to = *opts.Timeouts
+	}
+	to.Timeout = 0
+	streamOpts.Timeouts = &to
+	streamClient, err := httpclient.New(streamOpts)
+	if err != nil {
+		return nil, fmt.Errorf("creating stream http client: %w", err)
+	}
+
 	return &Datasource{
-		client:     NewClient(baseURL, httpClient),
-		httpClient: httpClient,
+		client:       NewClient(baseURL, httpClient),
+		httpClient:   httpClient,
+		streamClient: streamClient,
+		tailClient:   NewClient(baseURL, streamClient),
 	}, nil
 }
 
 // Dispose closes idle connections so the underlying transport doesn't leak
-// when the instance is replaced (e.g. after a settings change).
+// when the instance is replaced (e.g. after a settings change). Live-tail
+// channels are owned by their RunStream goroutine: Grafana cancels its
+// context when subscribers go away, the parser exits, and RunStream's defer
+// closes the channel. Dispose never touches the channels — that would race
+// with the owning goroutine and could panic on close-of-closed.
 func (d *Datasource) Dispose() {
 	if d.httpClient != nil {
 		d.httpClient.CloseIdleConnections()
+	}
+	if d.streamClient != nil {
+		d.streamClient.CloseIdleConnections()
 	}
 }
 
@@ -210,6 +263,115 @@ func (d *Datasource) resourceFieldValues(ctx context.Context, field string, limi
 		values = append(values, v.Value)
 	}
 	return sendJSON(sender, http.StatusOK, values)
+}
+
+// SubscribeStream authorises a Live channel subscription and pre-allocates
+// the per-path frame channel so RunStream can begin sending immediately.
+// Path is `${requestId}/${refId}` — each browser tab has a unique requestId
+// so subscriptions never collide across tabs.
+func (d *Datasource) SubscribeStream(_ context.Context, req *backend.SubscribeStreamRequest) (*backend.SubscribeStreamResponse, error) {
+	ch := make(chan *data.Frame, 16)
+	d.liveChannels.Store(req.Path, ch)
+	return &backend.SubscribeStreamResponse{Status: backend.SubscribeStreamStatusOK}, nil
+}
+
+// PublishStream rejects all client-side publishes — the live tail is
+// server-to-client only, the client never pushes data into the channel.
+func (d *Datasource) PublishStream(_ context.Context, _ *backend.PublishStreamRequest) (*backend.PublishStreamResponse, error) {
+	return &backend.PublishStreamResponse{Status: backend.PublishStreamStatusPermissionDenied}, nil
+}
+
+// RunStream opens the tail connection and fans NDJSON lines into the
+// per-path frame channel that SubscribeStream set up. Grafana retries this
+// call ~every 5s when the upstream connection closes; the previous channel
+// was closed and removed at the end of the prior attempt, so each retry
+// lazily creates a fresh one — Subscribe is only called once per session.
+func (d *Datasource) RunStream(ctx context.Context, req *backend.RunStreamRequest, sender *backend.StreamSender) error {
+	var qm queryModel
+	if err := json.Unmarshal(req.Data, &qm); err != nil {
+		return fmt.Errorf("parsing stream query: %w", err)
+	}
+	if qm.Expr == "" {
+		return fmt.Errorf("expr is required for live tail")
+	}
+
+	v, ok := d.liveChannels.Load(req.Path)
+	if !ok {
+		v = make(chan *data.Frame, 16)
+		d.liveChannels.Store(req.Path, v)
+	}
+	frames, ok := v.(chan *data.Frame)
+	if !ok {
+		return fmt.Errorf("unexpected channel type for path %q", req.Path)
+	}
+	// RunStream owns the channel: it is the only writer, and it closes
+	// the channel here so the sender goroutine drains and exits. Delete
+	// the map entry so the next retry lazy-creates a fresh channel
+	// instead of reusing this drained one.
+	defer func() {
+		d.liveChannels.Delete(req.Path)
+		close(frames)
+	}()
+
+	streamCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	body, err := d.tailClient.QueryLogsQLTail(streamCtx, qm.Expr)
+	if err != nil {
+		// Some upstream errors are permanent for this expression — e.g.
+		// /tail rejects pipes with a 400. Retrying the same query will
+		// never succeed, so surface the message once via a notice frame
+		// and return nil so Grafana's RunStream supervisor stops retrying.
+		if isPermanentTailError(err) {
+			_ = sender.SendFrame(buildTailNoticeFrame(err.Error()), data.IncludeAll)
+			return nil
+		}
+		return fmt.Errorf("opening tail stream: %w", err)
+	}
+	defer func() {
+		if cErr := body.Close(); cErr != nil {
+			backend.Logger.Debug("closing tail response body", "error", cErr)
+		}
+	}()
+
+	senderErrs := make(chan error, 1)
+	go func() {
+		// FrameJSONCache lets us reuse the schema across frames with the
+		// same structure, dropping bytes on the wire — matches what the
+		// VictoriaLogs datasource does in RunStream.
+		var prev data.FrameJSONCache
+		for frame := range frames {
+			next, err := data.FrameToJSONCache(frame)
+			if err != nil {
+				senderErrs <- fmt.Errorf("caching frame JSON: %w", err)
+				cancel()
+				return
+			}
+			var sErr error
+			if next.SameSchema(&prev) {
+				sErr = sender.SendBytes(next.Bytes(data.IncludeAll))
+			} else {
+				sErr = sender.SendFrame(frame, data.IncludeAll)
+			}
+			prev = next
+			if sErr != nil {
+				if errors.Is(sErr, context.Canceled) {
+					return
+				}
+				senderErrs <- sErr
+				cancel()
+				return
+			}
+		}
+	}()
+
+	parseErr := parseTailStream(streamCtx, body, frames)
+	select {
+	case sErr := <-senderErrs:
+		return sErr
+	default:
+	}
+	return parseErr
 }
 
 func sendJSON(sender backend.CallResourceResponseSender, status int, body interface{}) error {

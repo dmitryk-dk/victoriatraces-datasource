@@ -23,7 +23,7 @@ export interface VictoriaTracesQuery extends DataQuery {
   tags?: string;
   limit?: number;
   // LogsQL mode fields
-  // Raw LogsQL expression, e.g. "* | stats by (resource_attr:service.name) count() requests"
+  // Raw LogsQL expression, e.g. `* | stats by ("resource_attr:service.name") count() requests`
   expr?: string;
   // Optional step override for range queries, e.g. "1m". Backend auto-calculates when omitted.
   step?: string;

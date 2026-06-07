@@ -227,6 +227,15 @@ func (c *Client) QueryLogsQLLogs(ctx context.Context, expr string, start, end ti
 	return c.getStream(ctx, "/select/logsql/query", params)
 }
 
+// QueryLogsQLTail opens a live-tail stream against /select/logsql/tail.
+// The endpoint streams NDJSON lines without a fixed end, so the caller must
+// use a timeout-less HTTP client and close the returned ReadCloser when done.
+func (c *Client) QueryLogsQLTail(ctx context.Context, expr string) (io.ReadCloser, error) {
+	params := url.Values{}
+	params.Set("query", expr)
+	return c.getStream(ctx, "/select/logsql/tail", params)
+}
+
 // QueryLogsQLHits queries /select/logsql/hits and returns the raw JSON body.
 // The caller must close the returned ReadCloser.
 func (c *Client) QueryLogsQLHits(ctx context.Context, expr string, start, end time.Time, step, offset string, fields []string) (io.ReadCloser, error) {
