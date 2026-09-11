@@ -1,34 +1,53 @@
+const SECOND_MS = 1000;
+const MINUTE_MS = 60 * SECOND_MS;
+const HOUR_MS = 60 * MINUTE_MS;
+const DAY_MS = 24 * HOUR_MS;
+
 /**
- * Format a duration in milliseconds into a human-readable string.
- * Examples: 0.45ms → "450µs", 1.5ms → "1.50ms", 1500ms → "1.50s"
+ * A duration in milliseconds, in the unit that reads best at its magnitude —
+ * visum's ladder, which keeps two decimals all the way up rather than
+ * collapsing long traces into "150m 0s".
+ *
+ * Examples: 0.45 → "450µs", 1.5 → "1.50ms", 1500 → "1.50s", 9e6 → "2.50h".
  */
 export function formatDurationMs(ms: number): string {
   if (ms < 1) {
     return `${(ms * 1000).toFixed(0)}µs`;
   }
-  if (ms < 1000) {
+  if (ms < SECOND_MS) {
     return `${ms.toFixed(2)}ms`;
   }
-  if (ms < 60000) {
-    return `${(ms / 1000).toFixed(2)}s`;
+  if (ms < MINUTE_MS) {
+    return `${(ms / SECOND_MS).toFixed(2)}s`;
   }
-  const minutes = Math.floor(ms / 60000);
-  const seconds = ((ms % 60000) / 1000).toFixed(0);
-  return `${minutes}m ${seconds}s`;
+  // Half an hour reads better in hours than in minutes, as it does in visum.
+  if (ms < HOUR_MS / 2) {
+    return `${(ms / MINUTE_MS).toFixed(2)}min`;
+  }
+  if (ms < DAY_MS) {
+    return `${(ms / HOUR_MS).toFixed(2)}h`;
+  }
+  return `${(ms / DAY_MS).toFixed(2)}d`;
+}
+
+function pad(value: number, width = 2): string {
+  return String(value).padStart(width, '0');
 }
 
 /**
- * Format a unix timestamp in milliseconds as a locale date+time string.
+ * A unix millisecond timestamp as `YYYY-MM-DD HH:mm:ss.SSS` in local time.
+ *
+ * Fixed rather than locale-formatted: the column is read alongside other
+ * timestamps and compared between people, so its shape must not depend on the
+ * reader's browser.
  */
 export function formatTimestampMs(ms: number): string {
-  if (!ms) {return '';}
-  return new Date(ms).toLocaleString(undefined, {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    fractionalSecondDigits: 3,
-  });
+  if (!ms) {
+    return '';
+  }
+  const d = new Date(ms);
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
+    `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`
+  );
 }

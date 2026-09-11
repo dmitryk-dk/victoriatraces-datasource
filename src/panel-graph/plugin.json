@@ -1,7 +1,7 @@
 {
   "type": "panel",
   "name": "Node graph",
-  "id": "victoriatraces-panel-graph",
+  "id": "victoriametrics-traces-nodegraph-panel",
   "info": {
     "version": "1.0.0",
     "description": "Service dependency graph panel for VictoriaTraces",
@@ -14,7 +14,7 @@
     }
   },
   "dependencies": {
-    "grafanaDependency": ">=10.0.0"
+    "grafanaDependency": ">=12.3.0"
   }
 }
 

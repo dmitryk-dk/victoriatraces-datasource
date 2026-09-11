@@ -26,9 +26,18 @@ type victoriaTracesClient interface {
 	GetServices(ctx context.Context) (*JaegerServicesResponse, error)
 	GetOperations(ctx context.Context, service string) (*JaegerOperationsResponse, error)
 	SearchTraces(ctx context.Context, p SearchParams) (*JaegerResponse, error)
-	GetTrace(ctx context.Context, traceID string) (*JaegerResponse, error)
-	GetFieldNames(ctx context.Context, service, rawQuery string) (*FieldNamesResponse, error)
-	GetFieldValues(ctx context.Context, field string, limit int, service, rawQuery string) (*FieldValuesResponse, error)
+	SearchTracesTempo(ctx context.Context, p TempoSearchParams) (*TempoSearchResponse, error)
+	QueryTraceList(ctx context.Context, p TraceListParams) (io.ReadCloser, error)
+	QueryLogsQLStream(ctx context.Context, query, start, end string) (io.ReadCloser, error)
+	QueryOperationDurations(ctx context.Context, service, operation string, rootOnly bool, start, end string) (io.ReadCloser, error)
+	QueryHeatmap(ctx context.Context, where string, stepSeconds int64, start, end string) (io.ReadCloser, error)
+	QueryOperationStats(ctx context.Context, service, start, end string) (io.ReadCloser, error)
+	QuerySpanList(ctx context.Context, where string, limit int, start, end string) (io.ReadCloser, error)
+	QueryFacet(ctx context.Context, where, field string, limit int, start, end string) (io.ReadCloser, error)
+	GetTrace(ctx context.Context, traceID string, start, end time.Time) (*JaegerResponse, error)
+	GetDependencies(ctx context.Context, endTs, lookback int64) (*JaegerDependenciesResponse, error)
+	GetFieldNames(ctx context.Context, service, rawQuery string, start, end time.Time) (*FieldNamesResponse, error)
+	GetFieldValues(ctx context.Context, field string, limit int, service, rawQuery string, start, end time.Time) (*FieldValuesResponse, error)
 	QueryLogsQLRange(ctx context.Context, expr string, start, end time.Time, step, offset string) (*LogsQLResponse, error)
 	QueryLogsQLInstant(ctx context.Context, expr string, t time.Time, offset string) (*LogsQLResponse, error)
 	QueryLogsQLLogs(ctx context.Context, expr string, start, end time.Time, limit int, offset string) (io.ReadCloser, error)
@@ -143,9 +152,17 @@ func (d *Datasource) Dispose() {
 
 // QueryData handles all data queries from Grafana panels and Explore.
 func (d *Datasource) QueryData(ctx context.Context, req *backend.QueryDataRequest) (*backend.QueryDataResponse, error) {
+	// The panel needs the datasource uid to call resource endpoints of its own
+	// (facets, heatmap, trace detail). Explore does not reliably carry it on the
+	// request the panel receives, so it travels on the frame instead.
+	var dsUID string
+	if req.PluginContext.DataSourceInstanceSettings != nil {
+		dsUID = req.PluginContext.DataSourceInstanceSettings.UID
+	}
+
 	resp := backend.NewQueryDataResponse()
 	for _, q := range req.Queries {
-		resp.Responses[q.RefID] = d.handleQuery(ctx, q)
+		resp.Responses[q.RefID] = d.handleQuery(ctx, q, dsUID)
 	}
 	return resp, nil
 }
@@ -164,7 +181,7 @@ func (d *Datasource) CheckHealth(ctx context.Context, _ *backend.CheckHealthRequ
 			Message: fmt.Sprintf("cannot reach VictoriaTraces /health: %v", err),
 		}, nil
 	}
-	if _, err := d.client.GetFieldNames(ctx, "", ""); err != nil {
+	if _, err := d.client.GetFieldNames(ctx, "", "", time.Time{}, time.Time{}); err != nil {
 		return &backend.CheckHealthResult{
 			Status:  backend.HealthStatusError,
 			Message: fmt.Sprintf("VictoriaTraces is reachable but query failed: %v", err),
@@ -201,7 +218,7 @@ func (d *Datasource) CallResource(ctx context.Context, req *backend.CallResource
 	case "operations":
 		return d.resourceOperations(ctx, qs.Get("service"), sender)
 	case "field_names":
-		return d.resourceFieldNames(ctx, qs.Get("service"), qs.Get("query"), sender)
+		return d.resourceFieldNames(ctx, qs, sender)
 	case "field_values":
 		limit := 0
 		if v := qs.Get("limit"); v != "" {
@@ -209,8 +226,28 @@ func (d *Datasource) CallResource(ctx context.Context, req *backend.CallResource
 			// re-defaults to 100, so the parse error doesn't need to surface.
 			limit, _ = strconv.Atoi(v)
 		}
-		return d.resourceFieldValues(ctx, qs.Get("field"), limit, qs.Get("service"), qs.Get("query"), sender)
+		return d.resourceFieldValues(ctx, qs, limit, sender)
+	case "search":
+		return d.resourceSearch(ctx, qs, sender)
+	case "trace_list":
+		return d.resourceTraceList(ctx, qs, sender)
+	case "trace_sample":
+		return d.resourceTraceSample(ctx, qs, sender)
+	case "operation_durations":
+		return d.resourceOperationDurations(ctx, qs, sender)
+	case "heatmap":
+		return d.resourceHeatmap(ctx, qs, sender)
+	case "operation_stats":
+		return d.resourceOperationStats(ctx, qs, sender)
+	case "facets":
+		return d.resourceFacets(ctx, qs, sender)
+	case "dependencies":
+		return d.resourceDependencies(ctx, qs, sender)
 	default:
+		// Trace lookup is the only path with a variable segment: "trace/<id>".
+		if id, ok := strings.CutPrefix(req.Path, "trace/"); ok {
+			return d.resourceTrace(ctx, id, qs, sender)
+		}
 		return sender.Send(&backend.CallResourceResponse{Status: http.StatusNotFound})
 	}
 }
@@ -231,30 +268,46 @@ func (d *Datasource) resourceOperations(ctx context.Context, service string, sen
 	return sendJSON(sender, http.StatusOK, resp.Data)
 }
 
-func (d *Datasource) resourceFieldNames(ctx context.Context, service, rawQuery string, sender backend.CallResourceResponseSender) error {
-	resp, err := d.client.GetFieldNames(ctx, service, rawQuery)
+func (d *Datasource) resourceFieldNames(ctx context.Context, qs url.Values, sender backend.CallResourceResponseSender) error {
+	resp, err := d.client.GetFieldNames(
+		ctx,
+		qs.Get("service"),
+		qs.Get("query"),
+		parseRFC3339(qs.Get("start")),
+		parseRFC3339(qs.Get("end")),
+	)
 	if err != nil {
 		return sendJSON(sender, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
 	// Only expose typed-attribute fields (span_attr:, resource_attr:, ...) —
-	// those are the ones the Jaeger tag search can match against.
-	names := make([]string, 0, len(resp.Values))
+	// those are the ones the Jaeger tag search can match against. Hit counts
+	// travel with them so the picker can offer the common keys first.
+	names := make([]ValueWithHits, 0, len(resp.Values))
 	for _, v := range resp.Values {
 		if attrPrefixRe.MatchString(v.Value) {
-			names = append(names, v.Value)
+			names = append(names, v)
 		}
 	}
 	return sendJSON(sender, http.StatusOK, names)
 }
 
-func (d *Datasource) resourceFieldValues(ctx context.Context, field string, limit int, service, rawQuery string, sender backend.CallResourceResponseSender) error {
+func (d *Datasource) resourceFieldValues(ctx context.Context, qs url.Values, limit int, sender backend.CallResourceResponseSender) error {
+	field := qs.Get("field")
 	if field == "" {
 		return sendJSON(sender, http.StatusBadRequest, map[string]string{"error": "missing 'field' parameter"})
 	}
 	if limit <= 0 {
 		limit = 100
 	}
-	resp, err := d.client.GetFieldValues(ctx, field, limit, service, rawQuery)
+	resp, err := d.client.GetFieldValues(
+		ctx,
+		field,
+		limit,
+		qs.Get("service"),
+		qs.Get("query"),
+		parseRFC3339(qs.Get("start")),
+		parseRFC3339(qs.Get("end")),
+	)
 	if err != nil {
 		return sendJSON(sender, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
@@ -263,6 +316,256 @@ func (d *Datasource) resourceFieldValues(ctx context.Context, field string, limi
 		values = append(values, v.Value)
 	}
 	return sendJSON(sender, http.StatusOK, values)
+}
+
+// parseRFC3339 reads an RFC3339 query argument, yielding the zero time when it
+// is missing or malformed so the caller can omit it.
+func parseRFC3339(v string) time.Time {
+	if v == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339Nano, v)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
+// parseUnixSeconds reads a Unix-seconds query argument. Missing or malformed
+// values yield the zero time, which the client then omits from the request.
+func parseUnixSeconds(v string) time.Time {
+	if v == "" {
+		return time.Time{}
+	}
+	secs, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return time.Time{}
+	}
+	return time.Unix(secs, 0)
+}
+
+// resourceSearch backs the trace list on the app page. Start and end are Unix
+// seconds; end doubles as the paging cursor.
+func (d *Datasource) resourceSearch(ctx context.Context, qs url.Values, sender backend.CallResourceResponseSender) error {
+	limit := 0
+	if v := qs.Get("limit"); v != "" {
+		limit, _ = strconv.Atoi(v)
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+
+	resp, err := d.client.SearchTracesTempo(ctx, TempoSearchParams{
+		Query: qs.Get("q"),
+		Start: parseUnixSeconds(qs.Get("start")),
+		End:   parseUnixSeconds(qs.Get("end")),
+		Limit: limit,
+	})
+	if err != nil {
+		return sendJSON(sender, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+
+	traces := resp.Traces
+	if traces == nil {
+		traces = []TempoTraceSummary{}
+	}
+	return sendJSON(sender, http.StatusOK, traces)
+}
+
+// TraceSampleResponse is the scatter plot's sample plus the size of the set it
+// was drawn from, so the chart can say how much of the range it shows.
+type TraceSampleResponse struct {
+	Rows  []TraceListRow `json:"rows"`
+	Total int64          `json:"total"`
+}
+
+// resourceTraceSample backs the scatter plot: a spread sample of the traces in
+// range, rather than the newest page of them.
+func (d *Datasource) resourceTraceSample(ctx context.Context, qs url.Values, sender backend.CallResourceResponseSender) error {
+	limit := 0
+	if v := qs.Get("limit"); v != "" {
+		limit, _ = strconv.Atoi(v)
+	}
+	where, start, end := qs.Get("where"), qs.Get("start"), qs.Get("end")
+
+	body, err := d.client.QueryLogsQLStream(ctx, buildTraceSampleQuery(where, limit), start, end)
+	if err != nil {
+		return sendJSON(sender, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	rows, err := parseTraceListRows(body, nil)
+	closeBody(body)
+	if err != nil {
+		return sendJSON(sender, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+
+	// A failed count still leaves a usable chart, so it is not fatal: the
+	// legend simply cannot say what the sample was drawn from.
+	var total int64
+	if countBody, cErr := d.client.QueryLogsQLStream(ctx, buildTraceCountQuery(where), start, end); cErr == nil {
+		total, _ = parseTraceCount(countBody)
+		closeBody(countBody)
+	}
+
+	return sendJSON(sender, http.StatusOK, TraceSampleResponse{Rows: rows, Total: total})
+}
+
+// resourceTraceList backs the trace list on the app page. Unlike resourceSearch
+// it aggregates spans per trace, so rows carry span counts, error counts and
+// the trace's full service set.
+func (d *Datasource) resourceTraceList(ctx context.Context, qs url.Values, sender backend.CallResourceResponseSender) error {
+	limit := 0
+	if v := qs.Get("limit"); v != "" {
+		limit, _ = strconv.Atoi(v)
+	}
+
+	customFields := qs["customField"]
+
+	body, err := d.client.QueryTraceList(ctx, TraceListParams{
+		Where:        qs.Get("where"),
+		PostFilter:   qs.Get("postFilter"),
+		MatchCond:    qs.Get("matchCond"),
+		CustomFields: customFields,
+		Start:        qs.Get("start"),
+		End:          qs.Get("end"),
+		Limit:        limit,
+	})
+	if err != nil {
+		return sendJSON(sender, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	defer closeBody(body)
+
+	rows, err := parseTraceListRows(body, customFields)
+	if err != nil {
+		return sendJSON(sender, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	return sendJSON(sender, http.StatusOK, rows)
+}
+
+// resourceOperationDurations returns the duration sample the preview panel's
+// histogram compares a row against.
+func (d *Datasource) resourceOperationDurations(ctx context.Context, qs url.Values, sender backend.CallResourceResponseSender) error {
+	service, operation := qs.Get("service"), qs.Get("operation")
+	if service == "" || operation == "" {
+		return sendJSON(sender, http.StatusBadRequest, map[string]string{"error": "missing 'service' or 'operation' parameter"})
+	}
+
+	body, err := d.client.QueryOperationDurations(ctx, service, operation, qs.Get("rootOnly") == "true", qs.Get("start"), qs.Get("end"))
+	if err != nil {
+		return sendJSON(sender, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	defer closeBody(body)
+
+	durations, err := parseDurationsMicros(body)
+	if err != nil {
+		return sendJSON(sender, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	return sendJSON(sender, http.StatusOK, durations)
+}
+
+// resourceHeatmap backs the duration-over-time grid above the trace list.
+// startMs and endMs bound the grid; the bucket width is derived from them.
+func (d *Datasource) resourceHeatmap(ctx context.Context, qs url.Values, sender backend.CallResourceResponseSender) error {
+	startMs, errStart := strconv.ParseInt(qs.Get("startMs"), 10, 64)
+	endMs, errEnd := strconv.ParseInt(qs.Get("endMs"), 10, 64)
+	if errStart != nil || errEnd != nil || endMs <= startMs {
+		return sendJSON(sender, http.StatusBadRequest, map[string]string{"error": "invalid 'startMs' or 'endMs'"})
+	}
+
+	stepSeconds := heatmapStepSeconds(startMs, endMs)
+
+	body, err := d.client.QueryHeatmap(ctx, qs.Get("where"), stepSeconds, qs.Get("start"), qs.Get("end"))
+	if err != nil {
+		return sendJSON(sender, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	defer closeBody(body)
+
+	data, err := parseHeatmap(body, startMs, endMs, stepSeconds*1000)
+	if err != nil {
+		return sendJSON(sender, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	return sendJSON(sender, http.StatusOK, data)
+}
+
+// resourceFacets backs the filter sidebar: the common values of each requested
+// field, with the number of traces carrying them.
+func (d *Datasource) resourceFacets(ctx context.Context, qs url.Values, sender backend.CallResourceResponseSender) error {
+	fields := qs["field"]
+	if len(fields) == 0 {
+		return sendJSON(sender, http.StatusBadRequest, map[string]string{"error": "missing 'field' parameter"})
+	}
+
+	facets, err := d.collectFacets(ctx, qs.Get("where"), fields, qs.Get("start"), qs.Get("end"))
+	if err != nil {
+		return sendJSON(sender, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	return sendJSON(sender, http.StatusOK, facets)
+}
+
+// resourceOperationStats backs the operations overview: per-operation span
+// counts, average duration and error counts for one service.
+func (d *Datasource) resourceOperationStats(ctx context.Context, qs url.Values, sender backend.CallResourceResponseSender) error {
+	service := qs.Get("service")
+	if service == "" {
+		return sendJSON(sender, http.StatusBadRequest, map[string]string{"error": "missing 'service' parameter"})
+	}
+
+	body, err := d.client.QueryOperationStats(ctx, service, qs.Get("start"), qs.Get("end"))
+	if err != nil {
+		return sendJSON(sender, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	defer closeBody(body)
+
+	stats, truncated, err := parseOperationStats(body)
+	if err != nil {
+		return sendJSON(sender, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	// Wrapped rather than a bare array: the UI has to be able to say that the
+	// list it is showing is not the whole story.
+	return sendJSON(sender, http.StatusOK, OperationStatsResponse{Stats: stats, Truncated: truncated})
+}
+
+// resourceTrace returns a single trace with all of its spans. The time range is
+// passed through because the upstream requires one.
+func (d *Datasource) resourceTrace(ctx context.Context, traceID string, qs url.Values, sender backend.CallResourceResponseSender) error {
+	if traceID == "" {
+		return sendJSON(sender, http.StatusBadRequest, map[string]string{"error": "missing trace id"})
+	}
+	resp, err := d.client.GetTrace(ctx, traceID, parseRFC3339(qs.Get("start")), parseRFC3339(qs.Get("end")))
+	if err != nil {
+		// A 404 here means the trace expired or never arrived — a normal outcome
+		// worth distinguishing from a backend failure.
+		if IsNotFound(err) {
+			return sendJSON(sender, http.StatusNotFound, map[string]string{"error": "trace not found"})
+		}
+		return sendJSON(sender, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	if len(resp.Data) == 0 {
+		return sendJSON(sender, http.StatusNotFound, map[string]string{"error": "trace not found"})
+	}
+	return sendJSON(sender, http.StatusOK, resp.Data[0])
+}
+
+// resourceDependencies backs the service dependency graph. endTs and lookback
+// are milliseconds, matching the Jaeger API.
+func (d *Datasource) resourceDependencies(ctx context.Context, qs url.Values, sender backend.CallResourceResponseSender) error {
+	var endTs, lookback int64
+	if v := qs.Get("endTs"); v != "" {
+		endTs, _ = strconv.ParseInt(v, 10, 64)
+	}
+	if v := qs.Get("lookback"); v != "" {
+		lookback, _ = strconv.ParseInt(v, 10, 64)
+	}
+
+	resp, err := d.client.GetDependencies(ctx, endTs, lookback)
+	if err != nil {
+		return sendJSON(sender, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+
+	deps := resp.Data
+	if deps == nil {
+		deps = []ServiceDependency{}
+	}
+	return sendJSON(sender, http.StatusOK, deps)
 }
 
 // SubscribeStream authorises a Live channel subscription and pre-allocates

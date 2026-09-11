@@ -30,10 +30,19 @@ import { EditorRow } from './EditorRow';
 import EditorField from './EditorField';
 import QueryEditorOptionsGroup from './QueryEditorOptionsGroup';
 import { TagsInput } from './TagsInput';
+import { TraceFilterBar } from '../trace-ui/components/TraceFilterBar';
+import { buildTraceListQuery } from '../trace-ui/filters/logsql';
+import type { TraceFilter } from '../trace-ui/filters/types';
 
 type Props = QueryEditorProps<DataSource, VictoriaTracesQuery, VictoriaTracesOptions>;
 
+const entityOptions: Array<SelectableValue<'traces' | 'spans'>> = [
+  { label: 'Traces', value: 'traces' },
+  { label: 'Spans', value: 'spans' },
+];
+
 const topQueryTypeOptions: Array<SelectableValue<QueryType>> = [
+  { label: 'Traces', value: 'traceList' },
   { label: 'Search', value: 'search' },
   { label: 'Trace ID', value: 'traceId' },
   { label: 'LogsQL', value: 'logsql' },
@@ -112,7 +121,7 @@ function getCollapsedInfo(q: VictoriaTracesQuery): string[] {
   return items;
 }
 
-export function QueryEditor({ datasource, query, onChange, onRunQuery, data, app }: Props) {
+export function QueryEditor({ datasource, query, onChange, onRunQuery, data, app, range }: Props) {
   const styles = useStyles2(getStyles);
   const q = useMemo(() => ({ ...defaultQuery, ...query }), [query]);
 
@@ -179,9 +188,15 @@ export function QueryEditor({ datasource, query, onChange, onRunQuery, data, app
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Top-level radio collapses every logsql-* sub-type into the single "LogsQL" option.
+  // Top-level radio collapses every logsql-* sub-type into the single "LogsQL"
+  // option, and both list modes into "Traces" — spans vs traces is chosen by
+  // its own toggle rather than by the query type.
   const topLevelType: QueryType =
-    q.queryType === 'logsql-instant' || q.queryType === 'logsql-logs' ? 'logsql' : q.queryType;
+    q.queryType === 'logsql-instant' || q.queryType === 'logsql-logs'
+      ? 'logsql'
+      : q.queryType === 'spanList'
+        ? 'traceList'
+        : q.queryType;
 
   const collapsedInfo = useMemo(() => getCollapsedInfo(q), [q]);
 
@@ -192,8 +207,47 @@ export function QueryEditor({ datasource, query, onChange, onRunQuery, data, app
 
   const onTopTypeChange = useCallback(
     (value: QueryType) => {
-      const resolved = value === 'logsql' ? 'logsql-logs' : value;
+      const resolved =
+        value === 'logsql'
+          ? 'logsql-logs'
+          : value === 'traceList' && q.entity === 'spans'
+            ? 'spanList'
+            : value;
       onChange({ ...q, queryType: resolved });
+      onRunQuery();
+    },
+    [onChange, onRunQuery, q]
+  );
+
+  // The bar edits structured filters; the backend takes the LogsQL they derive.
+  // Both are stored so a saved query reopens with its filters intact.
+  const applyTraceFilters = useCallback(
+    (next: {
+      services?: string[];
+      traceFilters?: TraceFilter[];
+      rawQuery?: string;
+      entity?: 'traces' | 'spans';
+    }) => {
+      const services = next.services ?? q.services ?? [];
+      const traceFilters = next.traceFilters ?? q.traceFilters ?? [];
+      const rawQuery = next.rawQuery ?? q.expr ?? '';
+      const entity = next.entity ?? q.entity ?? 'traces';
+      // The same filters mean different LogsQL in each mode, so the derived
+      // query is rebuilt whenever either changes.
+      const derived = buildTraceListQuery({ filters: traceFilters, services, rawQuery, entity });
+
+      onChange({
+        ...q,
+        queryType: entity === 'spans' ? 'spanList' : 'traceList',
+        entity,
+        services,
+        traceFilters,
+        expr: rawQuery,
+        where: derived.where,
+        postFilter: derived.postFilter,
+        matchCond: derived.matchCond,
+        limit: derived.limit ?? q.limit,
+      });
       onRunQuery();
     },
     [onChange, onRunQuery, q]
@@ -413,6 +467,28 @@ export function QueryEditor({ datasource, query, onChange, onRunQuery, data, app
         </>
       )}
 
+      {/* ── Traces mode: visum-style filter bar ── */}
+      {(q.queryType === 'traceList' || q.queryType === 'spanList') && (
+        <div className={styles.row}>
+          <RadioButtonGroup
+            options={entityOptions}
+            value={q.entity ?? 'traces'}
+            onChange={(entity) => applyTraceFilters({ entity })}
+            size="sm"
+          />
+          <TraceFilterBar
+            uid={datasource.uid}
+            range={{ start: range?.from.toISOString(), end: range?.to.toISOString() }}
+            services={q.services ?? []}
+            filters={q.traceFilters ?? []}
+            rawQuery={q.expr ?? ''}
+            onServicesChange={(services) => applyTraceFilters({ services })}
+            onFiltersChange={(traceFilters) => applyTraceFilters({ traceFilters })}
+            onRawQueryChange={(rawQuery) => applyTraceFilters({ rawQuery })}
+          />
+        </div>
+      )}
+
       {/* ── Search mode ── */}
       {q.queryType === 'search' && (
         <>
@@ -434,6 +510,32 @@ export function QueryEditor({ datasource, query, onChange, onRunQuery, data, app
                 placeholder="Select operation"
                 isClearable
                 disabled={!q.serviceName}
+              />
+            </Field>
+            <Field
+              label="Min duration"
+              description="Only traces at least this long, e.g. 100ms"
+              className={styles.fieldFixed}
+            >
+              <Input
+                value={q.minDuration ?? ''}
+                placeholder="100ms"
+                onChange={(e) => onChange({ ...q, minDuration: e.currentTarget.value })}
+                onBlur={onRunQuery}
+                width={12}
+              />
+            </Field>
+            <Field
+              label="Max duration"
+              description="Only traces no longer than this, e.g. 2s"
+              className={styles.fieldFixed}
+            >
+              <Input
+                value={q.maxDuration ?? ''}
+                placeholder="2s"
+                onChange={(e) => onChange({ ...q, maxDuration: e.currentTarget.value })}
+                onBlur={onRunQuery}
+                width={12}
               />
             </Field>
             <Field label="Limit" className={styles.fieldFixed}>
@@ -458,6 +560,7 @@ export function QueryEditor({ datasource, query, onChange, onRunQuery, data, app
                 datasource={datasource}
                 tags={q.tags ?? ''}
                 serviceName={q.serviceName}
+                range={{ start: range?.from.toISOString(), end: range?.to.toISOString() }}
                 onChange={onTagsChange}
                 onBlur={onRunQuery}
               />

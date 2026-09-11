@@ -102,7 +102,7 @@ function buildDataLinks(cfgs: DerivedFieldConfig[]): DataLink[] {
 
 function buildInternalQuery(dsType: string | undefined, urlOrQuery: string): object {
   switch (dsType) {
-    case 'victoriatraces-datasource':
+    case 'victoriametrics-traces-datasource':
       return { queryType: 'traceId', traceId: urlOrQuery };
     case 'tempo':
       return { query: urlOrQuery, queryType: 'traceql' };

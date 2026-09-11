@@ -1,10 +1,12 @@
-import React, { useRef } from 'react';
+import React, { useMemo, useRef } from 'react';
 import { css } from '@emotion/css';
 import { useStyles2 } from '@grafana/ui';
 import type { GrafanaTheme2 } from '@grafana/data';
 import { formatDurationMs } from '../utils/formatDuration';
+import { colorForService } from '../utils/serviceColor';
 import { useTimelineRulerMarks } from '../utils/timelineRuler';
 import type { TraceSpan } from '../types';
+import type { CriticalSegment } from '../../trace-logic/criticalPath';
 
 interface SpanDurationProps {
   span: TraceSpan;
@@ -12,37 +14,18 @@ interface SpanDurationProps {
   maxMs: number;
   serviceName?: string;
   hasError?: boolean;
+  /** This span's segments on the trace's critical path, in ms. */
+  criticalSegments?: readonly CriticalSegment[];
 }
 
-// Reds excluded so red can mean "error" anywhere it appears in the panel.
-// Only light/medium colors so the dark inside-label text stays readable.
-const SERVICE_PALETTE = [
-  '#5794F2',
-  '#73BF69',
-  '#FADE2A',
-  '#B877D9',
-  '#FF9830',
-  '#3FB1D8',
-  '#8AB8FF',
-  '#E6C384',
-  '#A4C77E',
-  '#9FB4FF',
-];
-
-export function colorForService(name: string): string {
-  if (!name) {
-    return SERVICE_PALETTE[0];
-  }
-  let h = 0;
-  for (let i = 0; i < name.length; i++) {
-    h = (h * 31 + name.charCodeAt(i)) >>> 0;
-  }
-  return SERVICE_PALETTE[h % SERVICE_PALETTE.length];
-}
+export { colorForService } from '../utils/serviceColor';
 
 const ROW_HEIGHT = 22;
 const BAR_HEIGHT = 10;
 const MIN_INSIDE_LABEL_PCT = 18;
+
+// Narrowest a span bar may be drawn, as a percentage of the trace's width.
+const MIN_BAR_PCT = 0.5;
 const LABEL_FLIP_PCT = 88;
 
 const getStyles = (theme: GrafanaTheme2) => ({
@@ -112,6 +95,27 @@ const getStyles = (theme: GrafanaTheme2) => ({
     overflow: 'hidden',
     textOverflow: 'ellipsis',
   }),
+  criticalOverlay: css({
+    position: 'absolute',
+    top: '50%',
+    transform: 'translateY(-50%)',
+    height: BAR_HEIGHT,
+    // Clipped to the bar so a band can never render outside its span.
+    overflow: 'hidden',
+    pointerEvents: 'none',
+    zIndex: 2,
+  }),
+  criticalBand: css({
+    position: 'absolute',
+    top: '50%',
+    transform: 'translateY(-50%)',
+    height: 2,
+    minWidth: 2,
+    pointerEvents: 'auto',
+    // Reserved for the critical path, distinct from the service palette (which
+    // excludes reds) and from the error styling.
+    background: theme.colors.text.maxContrast,
+  }),
   labelOutside: css({
     position: 'absolute',
     top: 0,
@@ -126,7 +130,14 @@ const getStyles = (theme: GrafanaTheme2) => ({
   }),
 });
 
-export function SpanDuration({ span, minMs, maxMs, serviceName, hasError }: SpanDurationProps) {
+export function SpanDuration({
+  span,
+  minMs,
+  maxMs,
+  serviceName,
+  hasError,
+  criticalSegments,
+}: SpanDurationProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const styles = useStyles2(getStyles);
   const fullDuration = maxMs - minMs;
@@ -134,7 +145,25 @@ export function SpanDuration({ span, minMs, maxMs, serviceName, hasError }: Span
 
   const pLeft = fullDuration > 0 ? ((span.startTime - minMs) / fullDuration) * 100 : 0;
   const pRight = fullDuration > 0 ? ((maxMs - (span.startTime + span.duration)) / fullDuration) * 100 : 0;
-  const pWidth = Math.max(0.1, 100 - pLeft - pRight);
+  // visum's floor: a span thousands of times shorter than the trace still has
+  // to be wide enough to see and to hover.
+  const pWidth = Math.max(MIN_BAR_PCT, 100 - pLeft - pRight);
+
+  // Bands are positioned within this span's own bar rather than the whole
+  // timeline, so the overlay is clipped to the bar and a minimum-width sliver
+  // cannot spill past its edge.
+  const criticalBands = useMemo(() => {
+    if (!criticalSegments?.length || span.duration <= 0) {
+      return [];
+    }
+    return criticalSegments
+      .map((seg) => {
+        const left = Math.max(0, ((seg.start - span.startTime) / span.duration) * 100);
+        const right = Math.min(100, ((seg.end - span.startTime) / span.duration) * 100);
+        return { left, width: right - left };
+      })
+      .filter((band) => band.width > 0);
+  }, [criticalSegments, span.startTime, span.duration]);
 
   const baseColor = colorForService(serviceName ?? '');
   const labelText = formatDurationMs(span.duration);
@@ -159,6 +188,21 @@ export function SpanDuration({ span, minMs, maxMs, serviceName, hasError }: Span
       >
         {showLabelInside && <span className={styles.labelInside}>{labelText}</span>}
       </div>
+      {criticalBands.length > 0 && (
+        <div
+          className={styles.criticalOverlay}
+          style={{ left: `${pLeft}%`, width: `${pWidth}%` }}
+        >
+          {criticalBands.map((band, i) => (
+            <span
+              key={`critical-${i}`}
+              className={styles.criticalBand}
+              style={{ left: `${band.left}%`, width: `${band.width}%` }}
+              title="On the critical path — this segment gated the trace's duration"
+            />
+          ))}
+        </div>
+      )}
       {hasError && (
         <span
           className={styles.errorBadge}

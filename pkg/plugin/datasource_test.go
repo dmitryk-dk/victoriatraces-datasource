@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,10 +16,18 @@ import (
 
 // mockClient is a test double for victoriaTracesClient.
 type mockClient struct {
-	services   *JaegerServicesResponse
-	operations *JaegerOperationsResponse
-	traces     *JaegerResponse
-	err        error
+	services             *JaegerServicesResponse
+	operations           *JaegerOperationsResponse
+	traces               *JaegerResponse
+	tempoTraces          *TempoSearchResponse
+	traceListNDJSON      string
+	durationsNDJSON      string
+	heatmapNDJSON        string
+	operationStatsNDJSON string
+	spanListNDJSON       string
+	facetNDJSON          string
+	dependencies         *JaegerDependenciesResponse
+	err                  error
 }
 
 func (m *mockClient) Ping(_ context.Context) error {
@@ -33,8 +42,56 @@ func (m *mockClient) GetOperations(_ context.Context, _ string) (*JaegerOperatio
 func (m *mockClient) SearchTraces(_ context.Context, _ SearchParams) (*JaegerResponse, error) {
 	return m.traces, m.err
 }
-func (m *mockClient) GetTrace(_ context.Context, _ string) (*JaegerResponse, error) {
+func (m *mockClient) SearchTracesTempo(_ context.Context, _ TempoSearchParams) (*TempoSearchResponse, error) {
+	return m.tempoTraces, m.err
+}
+func (m *mockClient) QueryTraceList(_ context.Context, _ TraceListParams) (io.ReadCloser, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return io.NopCloser(strings.NewReader(m.traceListNDJSON)), nil
+}
+func (m *mockClient) QueryLogsQLStream(_ context.Context, _, _, _ string) (io.ReadCloser, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return io.NopCloser(strings.NewReader(m.traceListNDJSON)), nil
+}
+func (m *mockClient) QueryOperationDurations(_ context.Context, _, _ string, _ bool, _, _ string) (io.ReadCloser, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return io.NopCloser(strings.NewReader(m.durationsNDJSON)), nil
+}
+func (m *mockClient) QueryHeatmap(_ context.Context, _ string, _ int64, _, _ string) (io.ReadCloser, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return io.NopCloser(strings.NewReader(m.heatmapNDJSON)), nil
+}
+func (m *mockClient) QueryOperationStats(_ context.Context, _, _, _ string) (io.ReadCloser, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return io.NopCloser(strings.NewReader(m.operationStatsNDJSON)), nil
+}
+func (m *mockClient) QuerySpanList(_ context.Context, _ string, _ int, _, _ string) (io.ReadCloser, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return io.NopCloser(strings.NewReader(m.spanListNDJSON)), nil
+}
+func (m *mockClient) QueryFacet(_ context.Context, _, _ string, _ int, _, _ string) (io.ReadCloser, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return io.NopCloser(strings.NewReader(m.facetNDJSON)), nil
+}
+func (m *mockClient) GetTrace(_ context.Context, _ string, _, _ time.Time) (*JaegerResponse, error) {
 	return m.traces, m.err
+}
+func (m *mockClient) GetDependencies(_ context.Context, _, _ int64) (*JaegerDependenciesResponse, error) {
+	return m.dependencies, m.err
 }
 func (m *mockClient) QueryLogsQLRange(_ context.Context, _ string, _, _ time.Time, _, _ string) (*LogsQLResponse, error) {
 	return nil, m.err
@@ -51,10 +108,10 @@ func (m *mockClient) QueryLogsQLHits(_ context.Context, _ string, _, _ time.Time
 func (m *mockClient) QueryLogsQLTail(_ context.Context, _ string) (io.ReadCloser, error) {
 	return nil, m.err
 }
-func (m *mockClient) GetFieldNames(_ context.Context, _, _ string) (*FieldNamesResponse, error) {
+func (m *mockClient) GetFieldNames(_ context.Context, _, _ string, _, _ time.Time) (*FieldNamesResponse, error) {
 	return &FieldNamesResponse{}, m.err
 }
-func (m *mockClient) GetFieldValues(_ context.Context, _ string, _ int, _, _ string) (*FieldValuesResponse, error) {
+func (m *mockClient) GetFieldValues(_ context.Context, _ string, _ int, _, _ string, _, _ time.Time) (*FieldValuesResponse, error) {
 	return &FieldValuesResponse{}, m.err
 }
 
@@ -140,6 +197,37 @@ func TestQueryData(t *testing.T) {
 			checkRefID: "B",
 		},
 		{
+			// The charts render in their own Explore panel, which only exists
+			// if the response carries a frame addressed to that panel.
+			name: "trace list returns the charts frame ahead of the list",
+			client: &mockClient{
+				traceListNDJSON: `{"trace_id":"t1","spans":"1","errors":"0","duration_ns":"1000","start":"2026-09-11T10:00:00Z","services":"a","root_service":"a","root_operation":"op"}` + "\n",
+			},
+			queries: []backend.DataQuery{makeQuery(t, "E", queryModel{QueryType: queryTypeTraceList, Limit: 10})},
+			check: func(t *testing.T, r backend.DataResponse) {
+				assert.Nil(t, r.Error)
+				require.Len(t, r.Frames, 2)
+				// Explore stacks custom panels in frame order, so the charts
+				// come first and the list sits under them.
+				assert.Equal(t, "trace_charts", r.Frames[0].Name)
+				assert.Equal(t, "trace_list", r.Frames[1].Name)
+			},
+			checkRefID: "E",
+		},
+		{
+			name: "span list carries the charts frame too",
+			client: &mockClient{
+				traceListNDJSON: `{"trace_id":"t1","span_id":"s1","service_name":"a","name":"op","duration_ns":"1000","start":"2026-09-11T10:00:00Z"}` + "\n",
+			},
+			queries: []backend.DataQuery{makeQuery(t, "F", queryModel{QueryType: queryTypeSpanList, Limit: 10})},
+			check: func(t *testing.T, r backend.DataResponse) {
+				assert.Nil(t, r.Error)
+				require.Len(t, r.Frames, 2)
+				assert.Equal(t, "trace_charts", r.Frames[0].Name)
+			},
+			checkRefID: "F",
+		},
+		{
 			name:        "traceId without ID errors",
 			client:      &mockClient{},
 			queries:     []backend.DataQuery{makeQuery(t, "C", queryModel{QueryType: queryTypeTraceID, TraceID: ""})},
@@ -217,6 +305,77 @@ func TestCallResource(t *testing.T) {
 			client:     &mockClient{operations: &JaegerOperationsResponse{Data: []string{"op1", "op2"}}},
 			req:        &backend.CallResourceRequest{Path: "operations", URL: "service=frontend"},
 			wantStatus: http.StatusOK,
+		},
+		{
+			name: "search returns tempo trace summaries",
+			client: &mockClient{tempoTraces: &TempoSearchResponse{Traces: []TempoTraceSummary{
+				{TraceID: "abc", RootServiceName: "frontend", RootTraceName: "GET /", StartTimeUnixNano: 1_700_000_000_000_000_000, DurationMs: 12},
+			}}},
+			req:        &backend.CallResourceRequest{Path: "search", URL: "search?q=*&start=1700000000&end=1700003600&limit=10"},
+			wantStatus: http.StatusOK,
+			check: func(t *testing.T, body []byte) {
+				var result []TempoTraceSummary
+				require.NoError(t, json.Unmarshal(body, &result))
+				require.Len(t, result, 1)
+				assert.Equal(t, "abc", result[0].TraceID)
+			},
+		},
+		{
+			// A nil Traces slice must serialise as [] so the frontend can map over it.
+			name:       "search with no results returns an empty array",
+			client:     &mockClient{tempoTraces: &TempoSearchResponse{}},
+			req:        &backend.CallResourceRequest{Path: "search"},
+			wantStatus: http.StatusOK,
+			check: func(t *testing.T, body []byte) {
+				assert.JSONEq(t, `[]`, string(body))
+			},
+		},
+		{
+			name: "trace returns the single trace",
+			client: &mockClient{traces: &JaegerResponse{Data: []JaegerTrace{
+				{TraceID: "abc", Spans: []JaegerSpan{{SpanID: "s1"}}},
+			}}},
+			req:        &backend.CallResourceRequest{Path: "trace/abc"},
+			wantStatus: http.StatusOK,
+			check: func(t *testing.T, body []byte) {
+				var result JaegerTrace
+				require.NoError(t, json.Unmarshal(body, &result))
+				assert.Equal(t, "abc", result.TraceID)
+			},
+		},
+		{
+			name:       "trace with no data returns 404",
+			client:     &mockClient{traces: &JaegerResponse{}},
+			req:        &backend.CallResourceRequest{Path: "trace/missing"},
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:       "trace without an id returns 400",
+			client:     &mockClient{},
+			req:        &backend.CallResourceRequest{Path: "trace/"},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name: "dependencies returns graph edges",
+			client: &mockClient{dependencies: &JaegerDependenciesResponse{Data: []ServiceDependency{
+				{Parent: "frontend", Child: "backend", CallCount: 7},
+			}}},
+			req:        &backend.CallResourceRequest{Path: "dependencies", URL: "dependencies?endTs=1700000000000&lookback=3600000"},
+			wantStatus: http.StatusOK,
+			check: func(t *testing.T, body []byte) {
+				var result []ServiceDependency
+				require.NoError(t, json.Unmarshal(body, &result))
+				assert.Equal(t, int64(7), result[0].CallCount)
+			},
+		},
+		{
+			name:       "dependencies with no edges returns an empty array",
+			client:     &mockClient{dependencies: &JaegerDependenciesResponse{}},
+			req:        &backend.CallResourceRequest{Path: "dependencies"},
+			wantStatus: http.StatusOK,
+			check: func(t *testing.T, body []byte) {
+				assert.JSONEq(t, `[]`, string(body))
+			},
 		},
 		{
 			name:       "unknown path returns 404",

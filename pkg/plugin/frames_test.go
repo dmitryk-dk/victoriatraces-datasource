@@ -265,3 +265,17 @@ func TestTraceToNodeGraphFrames(t *testing.T) {
 		})
 	}
 }
+
+func TestTraceChartsFrame(t *testing.T) {
+	// Explore groups custom frames by their panel id, so the charts need a
+	// frame of their own to be rendered in a second panel; without one they
+	// would share the trace list's 400px box.
+	frame := TraceChartsFrame("uid-1")
+
+	require.NotNil(t, frame.Meta)
+	assert.Equal(t, "victoriametrics-traces-charts-panel", frame.Meta.PreferredVisualizationPluginID)
+	assert.Equal(t, "trace", string(frame.Meta.PreferredVisualization))
+	// The panel finds its datasource through the frame, as the trace list does.
+	assert.Equal(t, "uid-1", frame.Meta.Custom.(map[string]interface{})["datasourceUid"])
+	assert.Equal(t, "trace_charts", frame.Name)
+}

@@ -26,7 +26,8 @@ interface ServiceEdge {
 interface DependencyGraphProps {
   nodeIds: string[];
   edges: ServiceEdge[];
-  height?: number;
+  /** A number of pixels, or a CSS length when the graph should fill its box. */
+  height?: number | string;
   onNodeClick?: (id: string) => void;
 }
 

@@ -10,9 +10,15 @@ npm-debug.log*
 # TypeScript
 tsconfig.tsbuildinfo
 
+# Lint cache
+.eslintcache
+
 # Docker build caches
 .cache/
 .npm/
+# Container-side node_modules, kept off the host's so a Linux install
+# cannot overwrite the macOS one and break local tooling.
+.docker-node_modules/
 
 # Docker volumes
 victoriatraces-data/

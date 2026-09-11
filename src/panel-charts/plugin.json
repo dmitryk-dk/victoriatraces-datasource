@@ -1,0 +1,19 @@
+{
+  "type": "panel",
+  "name": "VictoriaTraces charts",
+  "id": "victoriametrics-traces-charts-panel",
+  "info": {
+    "version": "1.0.0",
+    "description": "Heatmap, scatter, operations and service map for VictoriaTraces",
+    "author": {
+      "name": "dmitryk-dk"
+    },
+    "logos": {
+      "small": "img/logo.svg",
+      "large": "img/logo.svg"
+    }
+  },
+  "dependencies": {
+    "grafanaDependency": ">=12.3.0"
+  }
+}

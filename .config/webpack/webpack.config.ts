@@ -9,13 +9,23 @@ import LiveReloadPlugin from 'webpack-livereload-plugin';
 import VirtualModulesPlugin from 'webpack-virtual-modules';
 
 import { BuildModeWebpackPlugin } from './BuildModeWebpackPlugin';
-import { DIST_DIR, SOURCE_DIR } from './constants';
-import { getCPConfigVersion, getEntries, getPackageJson, getPluginJson, hasReadme, isWSL } from './utils';
+import {
+  CHARTS_PANEL_DIST_DIR,
+  CHARTS_PANEL_PLUGIN_ID,
+  DIST_DIR,
+  NODEGRAPH_PANEL_DIST_DIR,
+  NODEGRAPH_PANEL_PLUGIN_ID,
+  PANEL_DIST_DIR,
+  PANEL_PLUGIN_ID,
+  SOURCE_DIR,
+} from './constants';
+import { getCPConfigVersion, getPackageJson, getPluginJson, hasReadme, isWSL } from './utils';
 
 const pluginJson = getPluginJson();
 const cpVersion = getCPConfigVersion();
 
-function makePublicPathPlugin(pluginId: string) {
+// `publicPathSegment` is the plugin's directory under public/plugins/.
+function makePublicPathPlugin(publicPathSegment: string) {
   return new VirtualModulesPlugin({
     'node_modules/grafana-public-path.js': `
 import amdMetaModule from 'amd-module';
@@ -23,17 +33,29 @@ import amdMetaModule from 'amd-module';
 __webpack_public_path__ =
   amdMetaModule && amdMetaModule.uri
     ? amdMetaModule.uri.slice(0, amdMetaModule.uri.lastIndexOf('/') + 1)
-    : 'public/plugins/${pluginId}/';
+    : 'public/plugins/${publicPathSegment}/';
 `,
   });
 }
 
-const virtualPublicPath = makePublicPathPlugin(pluginJson.id);
-const panelVirtualPublicPath = makePublicPathPlugin('victoriatraces-panel');
-const panelGraphVirtualPublicPath = makePublicPathPlugin('victoriatraces-panel-graph');
+const DS_PUBLIC_PATH = pluginJson.id;
+const PANEL_PUBLIC_PATH = PANEL_PLUGIN_ID;
+const NODEGRAPH_PANEL_PUBLIC_PATH = NODEGRAPH_PANEL_PLUGIN_ID;
+const CHARTS_PANEL_PUBLIC_PATH = CHARTS_PANEL_PLUGIN_ID;
+
+// The panel plugins live under src/ but ship as their own plugin directories, so
+// the datasource's recursive copies must skip them.
+const NESTED_SOURCE_IGNORE = ['**/panel/**', '**/panel-graph/**', '**/panel-charts/**'];
+
+const virtualPublicPath = makePublicPathPlugin(DS_PUBLIC_PATH);
+const panelVirtualPublicPath = makePublicPathPlugin(PANEL_PUBLIC_PATH);
+const panelGraphVirtualPublicPath = makePublicPathPlugin(NODEGRAPH_PANEL_PUBLIC_PATH);
+const panelChartsVirtualPublicPath = makePublicPathPlugin(CHARTS_PANEL_PUBLIC_PATH);
 
 const config = async (env: Record<string, unknown>): Promise<Configuration[]> => {
   const dsConfig: Configuration = {
+    name: 'datasource',
+
     cache: {
       type: 'filesystem',
       buildDependencies: {
@@ -45,7 +67,9 @@ const config = async (env: Record<string, unknown>): Promise<Configuration[]> =>
 
     devtool: env.production ? 'source-map' : 'eval-source-map',
 
-    entry: await getEntries(),
+    // Explicit rather than globbed: a `src/**/plugin.json` glob also picks up the
+    // panel manifests and would build their modules into the datasource dist too.
+    entry: { module: path.resolve(process.cwd(), SOURCE_DIR, 'module.tsx') },
 
     externals: [
       { 'amd-module': 'module' },
@@ -173,7 +197,7 @@ const config = async (env: Record<string, unknown>): Promise<Configuration[]> =>
         type: 'amd',
       },
       path: path.resolve(process.cwd(), DIST_DIR),
-      publicPath: `public/plugins/${pluginJson.id}/`,
+      publicPath: `public/plugins/${DS_PUBLIC_PATH}/`,
       uniqueName: pluginJson.id,
       crossOriginLoading: 'anonymous',
     },
@@ -188,14 +212,20 @@ const config = async (env: Record<string, unknown>): Promise<Configuration[]> =>
       }),
       new CopyWebpackPlugin({
         patterns: [
-          { from: hasReadme() ? 'README.md' : '../README.md', to: '.', force: true, noErrorOnMissing: true },
           { from: 'plugin.json', to: '.' },
+          {
+            from: hasReadme() ? 'README.md' : '../README.md',
+            to: '.',
+            force: true,
+            noErrorOnMissing: true,
+          },
           { from: '../LICENSE', to: '.', noErrorOnMissing: true },
           { from: '../CHANGELOG.md', to: '.', force: true, noErrorOnMissing: true },
-          { from: '**/*.json', to: '.' },
-          { from: '**/*.svg', to: '.', noErrorOnMissing: true },
-          { from: '**/*.png', to: '.', noErrorOnMissing: true },
-          { from: '**/*.html', to: '.', noErrorOnMissing: true },
+          // Skip the panel sources; their manifests belong to their own plugins.
+          { from: '**/*.json', to: '.', globOptions: { ignore: NESTED_SOURCE_IGNORE } },
+          { from: '**/*.svg', to: '.', noErrorOnMissing: true, globOptions: { ignore: NESTED_SOURCE_IGNORE } },
+          { from: '**/*.png', to: '.', noErrorOnMissing: true, globOptions: { ignore: NESTED_SOURCE_IGNORE } },
+          { from: '**/*.html', to: '.', noErrorOnMissing: true, globOptions: { ignore: NESTED_SOURCE_IGNORE } },
           { from: 'img/**/*', to: '.', noErrorOnMissing: true },
           { from: 'static/**/*', to: '.', noErrorOnMissing: true },
         ],
@@ -241,28 +271,28 @@ const config = async (env: Record<string, unknown>): Promise<Configuration[]> =>
       name: 'panel-cache',
       buildDependencies: { config: [__filename] },
     },
-    context: path.join(process.cwd(), 'src', 'panel'),
-    entry: { module: path.resolve(process.cwd(), 'src', 'panel', 'module.ts') },
+    context: path.join(process.cwd(), SOURCE_DIR, 'panel'),
+    entry: { module: path.resolve(process.cwd(), SOURCE_DIR, 'panel', 'module.ts') },
     output: {
       ...dsConfig.output,
       clean: false,
-      path: path.resolve(process.cwd(), 'plugins', 'victoriatraces-panel'),
-      publicPath: `public/plugins/victoriatraces-panel/`,
-      uniqueName: 'victoriatraces-panel',
+      path: path.resolve(process.cwd(), PANEL_DIST_DIR),
+      publicPath: `public/plugins/${PANEL_PUBLIC_PATH}/`,
+      uniqueName: PANEL_PLUGIN_ID,
     },
     plugins: [
       panelVirtualPublicPath,
       new CopyWebpackPlugin({
         patterns: [
-          { from: path.resolve(process.cwd(), 'src', 'panel', 'plugin.json'), to: '.' },
-          { from: path.resolve(process.cwd(), 'plugins', 'victoriatraces-datasource', 'img'), to: 'img', noErrorOnMissing: true },
+          { from: path.resolve(process.cwd(), SOURCE_DIR, 'panel', 'plugin.json'), to: '.' },
+          { from: path.resolve(process.cwd(), SOURCE_DIR, 'img'), to: 'img', noErrorOnMissing: true },
         ],
       }),
       ...(env.development ? [new LiveReloadPlugin()] : []),
     ],
   };
 
-  // --- Panel-graph plugin config ---
+  // --- Node graph panel plugin config ---
   const panelGraphConfig: Configuration = {
     ...dsConfig,
     name: 'panel-graph',
@@ -271,21 +301,51 @@ const config = async (env: Record<string, unknown>): Promise<Configuration[]> =>
       name: 'panel-graph-cache',
       buildDependencies: { config: [__filename] },
     },
-    context: path.join(process.cwd(), 'src', 'panel-graph'),
-    entry: { module: path.resolve(process.cwd(), 'src', 'panel-graph', 'module.ts') },
+    context: path.join(process.cwd(), SOURCE_DIR, 'panel-graph'),
+    entry: { module: path.resolve(process.cwd(), SOURCE_DIR, 'panel-graph', 'module.ts') },
     output: {
       ...dsConfig.output,
       clean: false,
-      path: path.resolve(process.cwd(), 'plugins', 'victoriatraces-panel-graph'),
-      publicPath: `public/plugins/victoriatraces-panel-graph/`,
-      uniqueName: 'victoriatraces-panel-graph',
+      path: path.resolve(process.cwd(), NODEGRAPH_PANEL_DIST_DIR),
+      publicPath: `public/plugins/${NODEGRAPH_PANEL_PUBLIC_PATH}/`,
+      uniqueName: NODEGRAPH_PANEL_PLUGIN_ID,
     },
     plugins: [
       panelGraphVirtualPublicPath,
       new CopyWebpackPlugin({
         patterns: [
-          { from: path.resolve(process.cwd(), 'src', 'panel-graph', 'plugin.json'), to: '.' },
-          { from: path.resolve(process.cwd(), 'plugins', 'victoriatraces-datasource', 'img'), to: 'img', noErrorOnMissing: true },
+          { from: path.resolve(process.cwd(), SOURCE_DIR, 'panel-graph', 'plugin.json'), to: '.' },
+          { from: path.resolve(process.cwd(), SOURCE_DIR, 'img'), to: 'img', noErrorOnMissing: true },
+        ],
+      }),
+      ...(env.development ? [new LiveReloadPlugin()] : []),
+    ],
+  };
+
+  // --- Charts panel plugin config ---
+  const panelChartsConfig: Configuration = {
+    ...dsConfig,
+    name: 'panel-charts',
+    cache: {
+      type: 'filesystem',
+      name: 'panel-charts-cache',
+      buildDependencies: { config: [__filename] },
+    },
+    context: path.join(process.cwd(), SOURCE_DIR, 'panel-charts'),
+    entry: { module: path.resolve(process.cwd(), SOURCE_DIR, 'panel-charts', 'module.ts') },
+    output: {
+      ...dsConfig.output,
+      clean: false,
+      path: path.resolve(process.cwd(), CHARTS_PANEL_DIST_DIR),
+      publicPath: `public/plugins/${CHARTS_PANEL_PUBLIC_PATH}/`,
+      uniqueName: CHARTS_PANEL_PLUGIN_ID,
+    },
+    plugins: [
+      panelChartsVirtualPublicPath,
+      new CopyWebpackPlugin({
+        patterns: [
+          { from: path.resolve(process.cwd(), SOURCE_DIR, 'panel-charts', 'plugin.json'), to: '.' },
+          { from: path.resolve(process.cwd(), SOURCE_DIR, 'img'), to: 'img', noErrorOnMissing: true },
         ],
       }),
       ...(env.development ? [new LiveReloadPlugin()] : []),
@@ -293,12 +353,14 @@ const config = async (env: Record<string, unknown>): Promise<Configuration[]> =>
   };
 
   if (isWSL()) {
-    dsConfig.watchOptions = { poll: 3000, ignored: /node_modules/ };
-    panelConfig.watchOptions = { poll: 3000, ignored: /node_modules/ };
-    panelGraphConfig.watchOptions = { poll: 3000, ignored: /node_modules/ };
+    const watchOptions = { poll: 3000, ignored: /node_modules/ };
+    dsConfig.watchOptions = watchOptions;
+    panelConfig.watchOptions = watchOptions;
+    panelGraphConfig.watchOptions = watchOptions;
+    panelChartsConfig.watchOptions = watchOptions;
   }
 
-  return [dsConfig, panelConfig, panelGraphConfig];
+  return [dsConfig, panelConfig, panelGraphConfig, panelChartsConfig];
 };
 
 export default config;

@@ -3,7 +3,7 @@
     "jsx": "react",
     "target": "ES2022",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "outDir": "plugins/victoriatraces-datasource",
+    "outDir": "plugins/victoriametrics-traces-datasource",
     "allowJs": true,
     "strict": true,
     "resolveJsonModule": true,
@@ -15,6 +15,7 @@
   "include": ["src/**/*"],
   "exclude": [
     "node_modules",
+    ".docker-node_modules",
     "plugins",
     "release",
     "dist",

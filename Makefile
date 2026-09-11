@@ -8,10 +8,10 @@ ifeq ($(PKG_TAG),)
 PKG_TAG := $(BUILDINFO_TAG)
 endif
 
-PLUGIN_ID=victoriatraces-datasource
+PLUGIN_ID=victoriametrics-traces-datasource
 APP_NAME=victoriatraces_backend_plugin
 
-GO_BUILDINFO = -X 'github.com/grafana/grafana-plugin-sdk-go/build.buildInfoJSON={\"time\":${DATEINFO_TAG},\"id\":\"${PLUGIN_ID}\",\"version\":\"${BUILDINFO_TAG}\",\"branch\":\"${PKG_TAG}\"}'
+GO_BUILDINFO = -X 'github.com/grafana/grafana-plugin-sdk-go/build.buildInfoJSON={\"time\":${DATEINFO_TAG},\"id\":\"victoriametrics-traces-datasource\",\"version\":\"${BUILDINFO_TAG}\",\"branch\":\"${PKG_TAG}\"}'
 
 .PHONY: $(MAKECMDGOALS)
 
@@ -19,10 +19,11 @@ frontend-package-base-image:
 	docker build -t vt-frontend-builder-image -f Dockerfile $(shell pwd)
 
 frontend-build: frontend-package-base-image
-	mkdir -p .npm .cache && \
-	chown -R $(shell id -u):$(shell id -g) .npm .cache && \
+	mkdir -p .npm .cache .docker-node_modules && \
+	chown -R $(shell id -u):$(shell id -g) .npm .cache .docker-node_modules && \
 	docker run --rm \
 		-v "$(shell pwd):/$(PLUGIN_ID)" \
+		-v "$(shell pwd)/.docker-node_modules:/$(PLUGIN_ID)/node_modules" \
 		-v "$(shell pwd)/.npm:/.npm" \
 		-v "$(shell pwd)/.cache:/.cache" \
 		-w /$(PLUGIN_ID) \

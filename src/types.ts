@@ -1,10 +1,20 @@
 import { DataQuery, DataSourceJsonData } from '@grafana/data';
 
+import type { TraceFilter } from './trace-ui/filters/types';
+
 // 'logsql'         → stats_query_range (time-series, for graph panels)
 // 'logsql-instant' → stats_query       (single value, for stat/table panels)
 // 'logsql-logs'    → /select/logsql/query (raw NDJSON log lines, for Logs panel)
 // 'logsql-hits'    → /select/logsql/hits  (hit counts grouped by field, for Logs volume)
-export type QueryType = 'search' | 'traceId' | 'logsql' | 'logsql-instant' | 'logsql-logs' | 'logsql-hits';
+export type QueryType =
+  | 'search'
+  | 'traceList'
+  | 'spanList'
+  | 'traceId'
+  | 'logsql'
+  | 'logsql-instant'
+  | 'logsql-logs'
+  | 'logsql-hits';
 
 export enum QueryEditorMode {
   Builder = 'builder',
@@ -15,12 +25,18 @@ export interface VictoriaTracesQuery extends DataQuery {
   queryType: QueryType;
   // Trace ID mode
   traceId?: string;
+  // Span to preselect in the waterfall — set when a filtered list row is
+  // opened, so the view lands on the span that matched rather than the root.
+  spanId?: string;
   // Search mode
   serviceName?: string;
   operationName?: string;
   // Space-separated key=value pairs, e.g. "http.status_code=200 error=true".
   // The backend converts these to the JSON format VictoriaTraces expects.
   tags?: string;
+  /** Search mode duration bounds, as the Jaeger API spells them ("100ms", "2s"). */
+  minDuration?: string;
+  maxDuration?: string;
   limit?: number;
   // LogsQL mode fields
   // Raw LogsQL expression, e.g. `* | stats by ("resource_attr:service.name") count() requests`
@@ -33,10 +49,27 @@ export interface VictoriaTracesQuery extends DataQuery {
   timezoneOffset?: string;
   // Fields to group by for hits queries (e.g. ["level"])
   fields?: string[];
+
+  // Trace-list mode. The filter bar keeps its structured state here and derives
+  // `where` / `postFilter` from it, so a saved query can be reopened for editing
+  // rather than only replayed.
+  services?: string[];
+  traceFilters?: TraceFilter[];
+  // Span-level LogsQL, applied before the per-trace aggregation.
+  where?: string;
+  // Applied after the aggregation, e.g. "| filter spans:>=3".
+  postFilter?: string;
+  // Bare service/operation condition, used to record which span matched.
+  matchCond?: string;
+  // Extra span fields surfaced as list columns, read from the root span.
+  customFields?: string[];
+  // Whether the list shows whole traces or individual spans. Mirrored by the
+  // query type, which is what the backend dispatches on.
+  entity?: 'traces' | 'spans';
 }
 
 export const defaultQuery: Partial<VictoriaTracesQuery> = {
-  queryType: 'search',
+  queryType: 'traceList',
   limit: 20,
 };
 

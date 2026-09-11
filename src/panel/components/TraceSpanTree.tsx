@@ -1,11 +1,43 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { css } from '@emotion/css';
-import { Icon, useStyles2 } from '@grafana/ui';
+import { Checkbox, Icon, Input, MultiSelect, useStyles2 } from '@grafana/ui';
 import type { GrafanaTheme2 } from '@grafana/data';
 import type { FlatSpanNode, Trace, TraceSpan } from '../types';
 import { formatDurationMs, formatTimestampMs } from '../utils/formatDuration';
 import { TimelineRuler } from './TimelineRuler';
 import { SpanDuration, colorForService } from './SpanDuration';
+import { buildChildrenByParent, findRootSpans, isErrorSpan } from '../../trace-logic/spanTree';
+import {
+  EMPTY_SPAN_FILTER,
+  filterSpans,
+  isSpanFilterActive,
+  traceServices,
+  type SpanFilter,
+} from '../../trace-logic/spanFilter';
+import { useVirtualizer } from '@tanstack/react-virtual';
+import { computeCriticalPath, heaviestCriticalSpanId } from '../../trace-logic/criticalPath';
+import { SpanTable } from './SpanTable';
+
+export type TraceView = 'waterfall' | 'table';
+
+const TRACE_VIEW_STORAGE_KEY = 'victoriatraces.traceView';
+
+/** The waterfall/table choice is a display preference, remembered per browser. */
+function readStoredTraceView(): TraceView {
+  try {
+    return localStorage.getItem(TRACE_VIEW_STORAGE_KEY) === 'table' ? 'table' : 'waterfall';
+  } catch {
+    return 'waterfall';
+  }
+}
+
+function writeStoredTraceView(view: TraceView): void {
+  try {
+    localStorage.setItem(TRACE_VIEW_STORAGE_KEY, view);
+  } catch {
+    // Storage disabled; the choice just will not survive a reload.
+  }
+}
 
 interface TraceSpanTreeProps {
   trace: Trace;
@@ -15,40 +47,41 @@ interface TraceSpanTreeProps {
 
 const INDENT_PX = 16;
 
-function buildFlatTree(
+// Every row is a single line, so the list can be sized without measuring.
+const ROW_HEIGHT_PX = 28;
+
+// Assumed viewport height before the scroll element reports its own.
+const INITIAL_VIEWPORT_PX = 800;
+
+export function buildFlatTree(
   spans: TraceSpan[],
-  expandedIds: Set<string>
+  expandedIds: Set<string>,
+  traceID: string
 ): FlatSpanNode[] {
-  const childMap = new Map<string, TraceSpan[]>();
-  for (const span of spans) {
-    const parentID = span.references.find((r) => r.refType === 'CHILD_OF')?.spanID ?? '';
-    if (!childMap.has(parentID)) {childMap.set(parentID, []);}
-    childMap.get(parentID)!.push(span);
-  }
+  const byId = new Map(spans.map((s) => [s.spanID, s]));
+  const childIdsByParent = buildChildrenByParent(spans, traceID);
+  const roots = findRootSpans(spans);
 
   const result: FlatSpanNode[] = [];
 
-  function traverse(parentID: string, depth: number) {
-    const children = childMap.get(parentID) ?? [];
-    for (const span of children) {
-      const hasChildren = (childMap.get(span.spanID)?.length ?? 0) > 0;
-      const isExpanded = expandedIds.has(span.spanID);
-      result.push({ span, depth, hasChildren, isExpanded });
-      if (hasChildren && isExpanded) {
-        traverse(span.spanID, depth + 1);
+  function push(span: TraceSpan, depth: number) {
+    const childIds = childIdsByParent.get(span.spanID) ?? [];
+    const hasChildren = childIds.length > 0;
+    const isExpanded = expandedIds.has(span.spanID);
+    result.push({ span, depth, hasChildren, isExpanded });
+    if (hasChildren && isExpanded) {
+      for (const id of childIds) {
+        const child = byId.get(id);
+        if (child) {
+          push(child, depth + 1);
+        }
       }
     }
   }
 
-  // Root spans have no CHILD_OF reference
-  const roots = spans.filter((s) => !s.references.some((r) => r.refType === 'CHILD_OF'));
-  for (const root of roots) {
-    const hasChildren = (childMap.get(root.spanID)?.length ?? 0) > 0;
-    const isExpanded = expandedIds.has(root.spanID);
-    result.push({ span: root, depth: 0, hasChildren, isExpanded });
-    if (hasChildren && isExpanded) {
-      traverse(root.spanID, 1);
-    }
+  // Several roots only happen in partial traces; show the earliest first.
+  for (const root of [...roots].sort((a, b) => a.startTime - b.startTime)) {
+    push(root, 0);
   }
 
   return result;
@@ -113,6 +146,15 @@ const getStyles = (theme: GrafanaTheme2) => ({
     gap: theme.spacing(1),
     marginTop: theme.spacing(1),
   }),
+  actionBtnActive: css({
+    cursor: 'pointer',
+    padding: `${theme.spacing(0.5)} ${theme.spacing(1)}`,
+    border: `1px solid ${theme.colors.primary.border}`,
+    borderRadius: theme.shape.radius.default,
+    background: theme.colors.primary.transparent,
+    color: theme.colors.text.primary,
+    fontSize: theme.typography.bodySmall.fontSize,
+  }),
   actionBtn: css({
     cursor: 'pointer',
     padding: `${theme.spacing(0.5)} ${theme.spacing(1)}`,
@@ -154,6 +196,35 @@ const getStyles = (theme: GrafanaTheme2) => ({
     cursor: 'pointer',
     '&:hover': { background: theme.colors.action.hover },
     '&:last-child': { borderBottom: 'none' },
+  }),
+  filterBar: css({
+    display: 'flex',
+    alignItems: 'center',
+    gap: theme.spacing(1),
+    padding: theme.spacing(1),
+    borderBottom: `1px solid ${theme.colors.border.weak}`,
+  }),
+  filterCount: css({
+    marginLeft: 'auto',
+    color: theme.colors.text.secondary,
+    fontSize: theme.typography.bodySmall.fontSize,
+    fontVariantNumeric: 'tabular-nums',
+  }),
+  emptyFilter: css({
+    padding: theme.spacing(2),
+    textAlign: 'center',
+    color: theme.colors.text.secondary,
+    fontSize: theme.typography.bodySmall.fontSize,
+  }),
+  criticalBadge: css({
+    marginLeft: theme.spacing(0.5),
+    padding: theme.spacing(0, 0.5),
+    borderRadius: theme.shape.radius.default,
+    background: theme.colors.warning.transparent,
+    border: `1px solid ${theme.colors.warning.border}`,
+    color: theme.colors.warning.text,
+    fontSize: theme.typography.bodySmall.fontSize,
+    whiteSpace: 'nowrap',
   }),
   rowSelected: css({
     background: `${theme.colors.primary.transparent} !important`,
@@ -233,17 +304,92 @@ const getStyles = (theme: GrafanaTheme2) => ({
 export function TraceSpanTree({ trace, selectedSpanId, onSelectSpan }: TraceSpanTreeProps) {
   const styles = useStyles2(getStyles);
   const { spans, processes, traceID } = trace;
-
-  const rootSpan = spans.find((s) => !s.references.some((r) => r.refType === 'CHILD_OF'));
+  
+  const rootSpan = findRootSpans(spans).sort((a, b) => a.startTime - b.startTime)[0];
   const traceMinMs = Math.min(...spans.map((s) => s.startTime));
   const traceMaxMs = Math.max(...spans.map((s) => s.startTime + s.duration));
   const totalDurationMs = traceMaxMs - traceMinMs;
-  const errorCount = spans.filter((s) => s.tags.some((t) => t.key === 'error' && t.value === 'true')).length;
+  const errorCount = spans.filter((s) => isErrorSpan(s.tags)).length;
 
   const allSpanIds = useMemo(() => spans.map((s) => s.spanID), [spans]);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set(allSpanIds));
+  const [filter, setFilter] = useState<SpanFilter>(EMPTY_SPAN_FILTER);
 
-  const flatNodes = useMemo(() => buildFlatTree(spans, expandedIds), [spans, expandedIds]);
+  // The panel keeps one tree mounted across traces, so expansion state has to
+  // follow the spans on screen: ids from the previous trace would leave the
+  // new one collapsed under its roots.
+  const spansKey = allSpanIds.join('\u0000');
+  const lastSpansKey = useRef(spansKey);
+  useEffect(() => {
+    if (lastSpansKey.current !== spansKey) {
+      lastSpansKey.current = spansKey;
+      setExpandedIds(new Set(allSpanIds));
+      setFilter(EMPTY_SPAN_FILTER);
+    }
+  }, [spansKey, allSpanIds]);
+  const [showCriticalPath, setShowCriticalPath] = useState(true);
+  const [view, setView] = useState<TraceView>(readStoredTraceView);
+
+  const changeView = useCallback((next: TraceView) => {
+    setView(next);
+    writeStoredTraceView(next);
+  }, []);
+
+  // The chain of spans that actually gated the trace's end-to-end duration.
+  // Computed once per trace and looked up per span while rendering.
+  const criticalPath = useMemo(
+    () => (showCriticalPath ? computeCriticalPath(spans) : new Map()),
+    [spans, showCriticalPath]
+  );
+
+  const services = useMemo(() => traceServices(spans, processes), [spans, processes]);
+  const filterActive = isSpanFilterActive(filter);
+  const { matched, visible } = useMemo(
+    () => filterSpans(spans, processes, filter),
+    [spans, processes, filter]
+  );
+
+  // The single span worth optimising, rather than every ancestor that happens
+  // to carry a critical segment.
+  const heaviestSpanId = useMemo(() => heaviestCriticalSpanId(criticalPath), [criticalPath]);
+
+  const allNodes = useMemo(
+    () => buildFlatTree(spans, expandedIds, trace.traceID),
+    [spans, expandedIds, trace.traceID]
+  );
+  // Matches keep their ancestors, so a hit stays readable in its own context.
+  const flatNodes = useMemo(
+    () => (filterActive ? allNodes.filter((n) => visible.has(n.span.spanID)) : allNodes),
+    [allNodes, filterActive, visible]
+  );
+
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  // A large trace holds thousands of rows; mounting them all makes scrolling
+  // unusable, which is why visum virtualizes this list too.
+  const virtualizer = useVirtualizer({
+    count: flatNodes.length,
+    getScrollElement: () => scrollRef.current,
+    // Until the element has been measured — first paint, and anywhere without
+    // layout — assume a screenful rather than withholding every row.
+    initialRect: { width: 0, height: INITIAL_VIEWPORT_PX },
+    // Rows are one line each, so a fixed size beats measuring every row.
+    estimateSize: () => ROW_HEIGHT_PX,
+    overscan: 16,
+  });
+
+  // Selecting a span elsewhere — a deep link, or the table view — should bring
+  // it into view rather than leave the reader to hunt for it.
+  useEffect(() => {
+    if (!selectedSpanId) {
+      return;
+    }
+    const index = flatNodes.findIndex((n) => n.span.spanID === selectedSpanId);
+    if (index >= 0) {
+      const frame = requestAnimationFrame(() => virtualizer.scrollToIndex(index, { align: 'center' }));
+      return () => cancelAnimationFrame(frame);
+    }
+    return;
+  }, [selectedSpanId, flatNodes, virtualizer]);
 
   const toggleExpand = useCallback(
     (spanId: string) => {
@@ -281,7 +427,71 @@ export function TraceSpanTree({ trace, selectedSpanId, onSelectSpan }: TraceSpan
           <button className={styles.actionBtn} onClick={() => setExpandedIds(new Set(allSpanIds))}>
             Expand all
           </button>
+          <button
+            className={view === 'waterfall' ? styles.actionBtnActive : styles.actionBtn}
+            onClick={() => changeView('waterfall')}
+            aria-pressed={view === 'waterfall'}
+          >
+            Waterfall
+          </button>
+          <button
+            className={view === 'table' ? styles.actionBtnActive : styles.actionBtn}
+            onClick={() => changeView('table')}
+            aria-pressed={view === 'table'}
+          >
+            Table
+          </button>
+          <button
+            className={showCriticalPath ? styles.actionBtnActive : styles.actionBtn}
+            onClick={() => setShowCriticalPath((v) => !v)}
+            aria-pressed={showCriticalPath}
+            title="Highlight the spans that gated the trace's duration"
+          >
+            Critical path
+          </button>
         </div>
+      </div>
+
+      {view === 'table' ? (
+        <SpanTable trace={trace} selectedSpanId={selectedSpanId} onSelectSpan={onSelectSpan} />
+      ) : (
+        <>
+      <div className={styles.filterBar}>
+        <Input
+          value={filter.text}
+          onChange={(e) => {
+            // Read before the updater runs: React releases the event first.
+            const text = e.currentTarget.value;
+            setFilter((f) => ({ ...f, text }));
+          }}
+          placeholder="Filter spans…"
+          aria-label="Filter spans"
+          width={28}
+        />
+        <MultiSelect
+          options={services.map((service) => ({ label: service, value: service }))}
+          value={filter.services as string[]}
+          onChange={(picked) =>
+            setFilter((f) => ({ ...f, services: picked.map((o) => o.value!).filter(Boolean) }))
+          }
+          placeholder="All services"
+          aria-label="Filter by service"
+          width={28}
+        />
+        <Checkbox
+          value={filter.errorsOnly}
+          onChange={(e) => {
+            const errorsOnly = e.currentTarget.checked;
+            setFilter((f) => ({ ...f, errorsOnly }));
+          }}
+          label="Errors only"
+          aria-label="Errors only"
+        />
+        {filterActive && (
+          <span className={styles.filterCount}>
+            {matched.size} of {spans.length} spans
+          </span>
+        )}
       </div>
 
       <div className={styles.tableHeader}>
@@ -295,24 +505,41 @@ export function TraceSpanTree({ trace, selectedSpanId, onSelectSpan }: TraceSpan
         </div>
       </div>
 
-      <div className={styles.rowsWrap}>
-        {flatNodes.map((node) => {
+      <div ref={scrollRef} className={styles.rowsWrap}>
+        {flatNodes.length === 0 ? (
+          <div className={styles.emptyFilter}>No spans match this filter.</div>
+        ) : (
+        <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
+        {virtualizer.getVirtualItems().map((virtualRow) => {
+          const node = flatNodes[virtualRow.index];
           const { span, depth, hasChildren, isExpanded } = node;
           const process = processes[span.processID];
           const serviceName = process?.serviceName ?? span.processID;
-          const hasError = span.tags.some((t) => t.key === 'error' && t.value === 'true');
+          const hasError = isErrorSpan(span.tags);
           const isSelected = span.spanID === selectedSpanId;
 
           return (
             <div
               key={span.spanID}
+              data-index={virtualRow.index}
               className={`${styles.row} ${isSelected ? styles.rowSelected : ''}`}
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                height: ROW_HEIGHT_PX,
+                transform: `translateY(${virtualRow.start}px)`,
+              }}
               onClick={() => onSelectSpan?.(span.spanID)}
             >
               <div className={styles.rowLeft} style={{ paddingLeft: `${8 + depth * INDENT_PX}px` }}>
                 {hasChildren ? (
                   <span
                     className={styles.expandIcon}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${span.operationName}`}
                     onClick={(e) => { e.stopPropagation(); toggleExpand(span.spanID); }}
                   >
                     <Icon name={isExpanded ? 'angle-down' : 'angle-right'} size="sm" />
@@ -330,6 +557,11 @@ export function TraceSpanTree({ trace, selectedSpanId, onSelectSpan }: TraceSpan
                   <Icon name="angle-right" size="xs" className={styles.arrow} />
                   <span className={styles.opName}>{span.operationName}</span>
                   {hasError && <span className={styles.errorSpan}>error</span>}
+                  {span.spanID === heaviestSpanId && (
+                    <span className={styles.criticalBadge} title="Owns most of the critical path">
+                      critical
+                    </span>
+                  )}
                 </div>
               </div>
               <div className={styles.rowRight}>
@@ -339,12 +571,17 @@ export function TraceSpanTree({ trace, selectedSpanId, onSelectSpan }: TraceSpan
                   maxMs={traceMaxMs}
                   serviceName={serviceName}
                   hasError={hasError}
+                  criticalSegments={criticalPath.get(span.spanID)}
                 />
               </div>
             </div>
           );
         })}
+        </div>
+        )}
       </div>
+        </>
+      )}
     </div>
   );
 }

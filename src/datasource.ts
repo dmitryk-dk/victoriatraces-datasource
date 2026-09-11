@@ -26,6 +26,33 @@ interface CacheEntry<T> {
   promise: Promise<T>;
 }
 
+/** RFC3339 bounds for a metadata lookup. */
+export interface MetadataRange {
+  start?: string;
+  end?: string;
+}
+
+/**
+ * Scopes a metadata lookup to the range on screen.
+ *
+ * Unscoped, these scan the whole retention window: on a modest dataset that is
+ * 25 seconds against 0.2 for the same call bounded to an hour, which is the
+ * difference between a working picker and a request that times out.
+ */
+function appendRange(params: URLSearchParams, range?: MetadataRange): void {
+  if (range?.start) {
+    params.set('start', range.start);
+  }
+  if (range?.end) {
+    params.set('end', range.end);
+  }
+}
+
+/** Part of the cache key: a different range is a different answer. */
+function rangeKey(range?: MetadataRange): string {
+  return `${range?.start ?? ''}|${range?.end ?? ''}`;
+}
+
 export class DataSource extends DataSourceWithBackend<VictoriaTracesQuery, VictoriaTracesOptions> {
   nodeGraph: NodeGraphOptions;
   derivedFields: DerivedFieldConfig[];
@@ -186,7 +213,7 @@ export class DataSource extends DataSourceWithBackend<VictoriaTracesQuery, Victo
           .pipe(
             map((response) => ({
               data: response.data ?? [],
-              key: `victoriatraces-datasource-${request.requestId}-${query.refId}`,
+              key: `victoriametrics-traces-datasource-${request.requestId}-${query.refId}`,
               state: LoadingState.Streaming,
             }))
           );
@@ -196,7 +223,8 @@ export class DataSource extends DataSourceWithBackend<VictoriaTracesQuery, Victo
 
   getDefaultQuery(app: CoreApp): Partial<VictoriaTracesQuery> {
     return {
-      queryType: app === CoreApp.Explore ? 'search' : 'traceId',
+      // Explore opens on the filter-bar trace list, which is the richer view.
+      queryType: app === CoreApp.Explore ? 'traceList' : 'traceId',
       limit: 20,
     };
   }
@@ -281,7 +309,12 @@ export class DataSource extends DataSourceWithBackend<VictoriaTracesQuery, Victo
     );
   }
 
-  async getFieldNames(service?: string, query?: string, limit?: number): Promise<string[]> {
+  async getFieldNames(
+    service?: string,
+    query?: string,
+    limit?: number,
+    range?: MetadataRange
+  ): Promise<string[]> {
     const params = new URLSearchParams();
     if (service) {
       params.set('service', service);
@@ -292,16 +325,31 @@ export class DataSource extends DataSourceWithBackend<VictoriaTracesQuery, Victo
     if (limit && limit > 0) {
       params.set('limit', String(limit));
     }
+    appendRange(params, range);
     const qs = params.toString();
-    const key = `${service ?? ''}|${query ?? ''}|${limit ?? ''}`;
+    const key = `${service ?? ''}|${query ?? ''}|${limit ?? ''}|${rangeKey(range)}`;
     return this.cached(
       this.fieldNamesCache.get(key),
-      () => this.getResource(`field_names${qs ? '?' + qs : ''}`),
+      async () => {
+        // The resource reports each name with the number of spans carrying it,
+        // which the filter picker orders by. Every caller here wants the bare
+        // names, so the counts are dropped rather than pushed onto them.
+        const names: Array<string | { value: string }> = await this.getResource(
+          `field_names${qs ? '?' + qs : ''}`
+        );
+        return names.map((n) => (typeof n === 'string' ? n : n.value));
+      },
       (e) => { e ? this.fieldNamesCache.set(key, e) : this.fieldNamesCache.delete(key); }
     );
   }
 
-  async getFieldValues(field: string, limit = 100, service?: string, query?: string): Promise<string[]> {
+  async getFieldValues(
+    field: string,
+    limit = 100,
+    service?: string,
+    query?: string,
+    range?: MetadataRange
+  ): Promise<string[]> {
     const params = new URLSearchParams();
     params.set('field', field);
     if (limit > 0) {
@@ -313,7 +361,8 @@ export class DataSource extends DataSourceWithBackend<VictoriaTracesQuery, Victo
     if (query) {
       params.set('query', query);
     }
-    const key = `${field}|${limit}|${service ?? ''}|${query ?? ''}`;
+    appendRange(params, range);
+    const key = `${field}|${limit}|${service ?? ''}|${query ?? ''}|${rangeKey(range)}`;
     return this.cached(
       this.fieldValuesCache.get(key),
       () => this.getResource(`field_values?${params.toString()}`),

@@ -93,9 +93,9 @@ make vt-plugin-build
 
 This writes three plugin directories under `plugins/`:
 
-- `victoriatraces-datasource` - the datasource itself (Go backend + React frontend)
-- `victoriatraces-panel` - custom trace timeline panel
-- `victoriatraces-panel-graph` - service dependency graph panel
+- `victoriametrics-traces-datasource` - the datasource itself (Go backend + React frontend)
+- `victoriametrics-traces-panel` - custom trace timeline panel
+- `victoriametrics-traces-nodegraph-panel` - service dependency graph panel
 
 Alternatively, grab a pre-built archive from the
 [releases page](https://github.com/dmitryk-dk/victoriatraces-datasource/releases) and extract
@@ -139,7 +139,7 @@ plugin from where you built it:
 plugins = /absolute/path/to/victoriatraces-datasource/plugins
 
 [plugins]
-allow_loading_unsigned_plugins = victoriatraces-datasource,victoriatraces-panel,victoriatraces-panel-graph
+allow_loading_unsigned_plugins = victoriametrics-traces-datasource,victoriametrics-traces-panel,victoriametrics-traces-nodegraph-panel
 ```
 
 All three IDs need to be in the allow list - the datasource won't work properly without the
@@ -182,7 +182,7 @@ Pin a version and pull from the GitHub releases page:
 
 ```yaml
 env:
-  GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS: "victoriatraces-datasource,victoriatraces-panel,victoriatraces-panel-graph"
+  GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS: "victoriametrics-traces-datasource,victoriametrics-traces-panel,victoriametrics-traces-nodegraph-panel"
 
 extraInitContainers:
   - name: load-vt-ds-plugin
@@ -200,7 +200,7 @@ extraInitContainers:
         mkdir -p /var/lib/grafana/plugins/
         ver=$(curl -s -L https://api.github.com/repos/dmitryk-dk/victoriatraces-datasource/releases/latest \
               | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-        curl -L https://github.com/dmitryk-dk/victoriatraces-datasource/releases/download/$ver/victoriatraces-datasource-${ver#v}.tar.gz \
+        curl -L https://github.com/dmitryk-dk/victoriatraces-datasource/releases/download/$ver/victoriametrics-traces-datasource-${ver#v}.tar.gz \
              -o /tmp/vt-plugin.tar.gz
         tar -xf /tmp/vt-plugin.tar.gz -C /var/lib/grafana/plugins/
         rm /tmp/vt-plugin.tar.gz
@@ -240,7 +240,7 @@ metadata:
 spec:
   config:
     plugins:
-      allow_loading_unsigned_plugins: "victoriatraces-datasource,victoriatraces-panel,victoriatraces-panel-graph"
+      allow_loading_unsigned_plugins: "victoriametrics-traces-datasource,victoriametrics-traces-panel,victoriametrics-traces-nodegraph-panel"
   persistentVolumeClaim:
     spec:
       accessModes: [ReadWriteOnce]
@@ -267,7 +267,7 @@ spec:
                   mkdir -p /var/lib/grafana/plugins/
                   ver=$(curl -s -L https://api.github.com/repos/dmitryk-dk/victoriatraces-datasource/releases/latest \
                         | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-                  curl -L https://github.com/dmitryk-dk/victoriatraces-datasource/releases/download/$ver/victoriatraces-datasource-${ver#v}.tar.gz \
+                  curl -L https://github.com/dmitryk-dk/victoriatraces-datasource/releases/download/$ver/victoriametrics-traces-datasource-${ver#v}.tar.gz \
                        -o /tmp/vt-plugin.tar.gz
                   tar -xf /tmp/vt-plugin.tar.gz -C /var/lib/grafana/plugins/
                   rm /tmp/vt-plugin.tar.gz
@@ -282,7 +282,7 @@ metadata:
 spec:
   datasource:
     name: VictoriaTraces
-    type: victoriatraces-datasource
+    type: victoriametrics-traces-datasource
     access: proxy
     url: http://victoriatraces.observability.svc.cluster.local:10428
   instanceSelector:
@@ -302,7 +302,7 @@ If you'd rather skip building, download a tarball straight into Grafana's plugin
 ```sh
 ver=$(curl -s -L https://api.github.com/repos/dmitryk-dk/victoriatraces-datasource/releases/latest \
       | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-curl -L https://github.com/dmitryk-dk/victoriatraces-datasource/releases/download/$ver/victoriatraces-datasource-${ver#v}.tar.gz \
+curl -L https://github.com/dmitryk-dk/victoriatraces-datasource/releases/download/$ver/victoriametrics-traces-datasource-${ver#v}.tar.gz \
      -o /var/lib/grafana/plugins/vt-plugin.tar.gz
 tar -xf /var/lib/grafana/plugins/vt-plugin.tar.gz -C /var/lib/grafana/plugins/
 rm /var/lib/grafana/plugins/vt-plugin.tar.gz
@@ -320,7 +320,7 @@ The repo ships with example provisioning files used by the Docker Compose setup.
 apiVersion: 1
 datasources:
   - name: VictoriaTraces
-    type: victoriatraces-datasource
+    type: victoriametrics-traces-datasource
     access: proxy
     url: http://victoriatraces:10428
     isDefault: true
@@ -615,7 +615,7 @@ an M-series Mac.
 plugins = /path/to/victoriatraces-datasource/plugins
 
 [plugins]
-allow_loading_unsigned_plugins = victoriatraces-datasource,victoriatraces-panel,victoriatraces-panel-graph
+allow_loading_unsigned_plugins = victoriametrics-traces-datasource,victoriametrics-traces-panel,victoriametrics-traces-nodegraph-panel
 ```
 
 ### 3. Run it
@@ -666,8 +666,9 @@ Same flow as VictoriaLogs: install `delve`, run `mage debugger`, attach your IDE
 `plugin.json` has `metrics: true`. That doesn't mean VictoriaTraces serves metrics - it just lets
 the plugin be picked up in the panel editor for LogsQL stats queries that return numeric series.
 
-The bundled panel plugins (`victoriatraces-panel`, `victoriatraces-panel-graph`) ship together
-with the datasource. They share styling and a few utilities, and they expect the datasource to
+The bundled panel plugins (`victoriametrics-traces-panel`,
+`victoriametrics-traces-nodegraph-panel`) ship together with the datasource inside the app
+plugin. They share styling and a few utilities, and they expect the datasource to
 emit specific data-frame shapes - using them with another datasource won't do anything useful.
 
 If you hit a 404 from `GET /select/jaeger/api/traces/<id>` that's the upstream telling you the

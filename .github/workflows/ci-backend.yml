@@ -103,6 +103,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: backend-${{ github.sha }}
-          path: plugins/victoriatraces-datasource
+          path: plugins/victoriametrics-traces-datasource
           if-no-files-found: error
           retention-days: 7

@@ -37,7 +37,7 @@ function makeProps(overrides: Partial<Props> = {}): Props {
       uid: 'test',
       orgId: 1,
       name: 'VictoriaTraces',
-      type: 'victoriatraces-datasource',
+      type: 'victoriametrics-traces-datasource',
       typeName: 'VictoriaTraces',
       typeLogoUrl: '',
       access: 'proxy',

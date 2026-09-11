@@ -9,6 +9,10 @@ module.exports = {
     '@openfeature/react-sdk': path.resolve(__dirname, 'jest', 'mocks', 'openfeature-react.js'),
   },
   modulePaths: ['<rootDir>/src'],
+  // The Docker frontend build keeps its own node_modules in the repo. Without
+  // this, jest sees two copies of every package and fails on duplicate module
+  // names.
+  modulePathIgnorePatterns: ['<rootDir>/.docker-node_modules'],
   setupFilesAfterEnv: ['<rootDir>/.config/jest-setup.js'],
   testEnvironment: 'jest-environment-jsdom',
   testMatch: [

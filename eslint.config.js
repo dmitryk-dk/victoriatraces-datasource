@@ -11,6 +11,7 @@ module.exports = [
       '.config/**',
       '.cache/**',
       '.npm/**',
+      '.docker-node_modules/**',
       'bin/**',
       '**/*.d.ts',
     ],

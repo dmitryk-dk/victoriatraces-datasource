@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { css } from '@emotion/css';
 import { GrafanaTheme2, SelectableValue } from '@grafana/data';
 import { Button, IconButton, Select, useStyles2 } from '@grafana/ui';
@@ -10,6 +10,8 @@ interface Props {
   datasource: DataSource;
   tags: string;
   serviceName?: string;
+  /** Range on screen; suggestions are scoped to it, or the lookup scans all retention. */
+  range?: { start?: string; end?: string };
   onChange: (tags: string) => void;
   onBlur: () => void;
 }
@@ -80,7 +82,12 @@ function toOptions(values: string[]): Array<SelectableValue<string>> {
   return values.map((v) => ({ label: v, value: v }));
 }
 
-export function TagsInput({ datasource, tags, serviceName, onChange, onBlur }: Props) {
+export function TagsInput({ datasource, tags, serviceName, range, onChange, onBlur }: Props) {
+  // The range arrives as a fresh object each render; the effects below key off
+  // its values so they refetch when the range moves, not on every render.
+  const rangeStart = range?.start;
+  const rangeEnd = range?.end;
+  const metaRange = useMemo(() => ({ start: rangeStart, end: rangeEnd }), [rangeStart, rangeEnd]);
   const styles = useStyles2(getStyles);
   const parsed = parseTags(tags);
 
@@ -100,7 +107,7 @@ export function TagsInput({ datasource, tags, serviceName, onChange, onBlur }: P
     setSelectedValue(null);
     setValueOptions([]);
     datasource
-      .getFieldNames(serviceName)
+      .getFieldNames(serviceName, undefined, undefined, metaRange)
       .then((names) => {
         if (!cancelled) {
           setKeyOptions(toOptions(names));
@@ -120,7 +127,7 @@ export function TagsInput({ datasource, tags, serviceName, onChange, onBlur }: P
     return () => {
       cancelled = true;
     };
-  }, [datasource, serviceName]);
+  }, [datasource, serviceName, metaRange]);
 
   useEffect(() => {
     const key = selectedKey?.value;
@@ -132,7 +139,7 @@ export function TagsInput({ datasource, tags, serviceName, onChange, onBlur }: P
     setValuesLoading(true);
     setSelectedValue(null);
     datasource
-      .getFieldValues(key, 100, serviceName)
+      .getFieldValues(key, 100, serviceName, undefined, metaRange)
       .then((values) => {
         if (!cancelled) {
           setValueOptions(toOptions(values.filter((v) => v !== '')));
@@ -152,7 +159,7 @@ export function TagsInput({ datasource, tags, serviceName, onChange, onBlur }: P
     return () => {
       cancelled = true;
     };
-  }, [datasource, serviceName, selectedKey]);
+  }, [datasource, serviceName, selectedKey, metaRange]);
 
   const onAddTag = useCallback(() => {
     const key = selectedKey?.value;

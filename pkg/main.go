@@ -11,7 +11,7 @@ import (
 
 func main() {
 	if err := datasource.Manage(
-		"victoriatraces-datasource",
+		"victoriametrics-traces-datasource",
 		plugin.NewDatasource,
 		datasource.ManageOpts{},
 	); err != nil {
