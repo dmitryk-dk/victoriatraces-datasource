@@ -171,7 +171,7 @@ export function FilterForm({
     values.map((v) => ({ label: v, value: v }));
 
   return (
-    <form className={styles.form} onSubmit={submit}>
+    <form className={styles.form} onSubmit={submit} data-testid="trace-filter-form">
       {kind === "operation" && (
         <Field label="Operation" className={styles.field}>
           <Select

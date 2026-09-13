@@ -13,6 +13,11 @@ tsconfig.tsbuildinfo
 # Lint cache
 .eslintcache
 
+# Playwright
+/playwright/.auth/
+/playwright-report/
+/test-results/
+
 # Docker build caches
 .cache/
 .npm/

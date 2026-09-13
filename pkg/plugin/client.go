@@ -485,27 +485,6 @@ func (c *Client) GetFieldValues(ctx context.Context, field string, limit int, se
 	return &result, nil
 }
 
-// GetTrace retrieves a single trace by its ID.
-//
-// The time range is required: without it VictoriaTraces rejects the request as
-// "out of retention" rather than searching all retained data, so a trace that
-// exists is reported as missing.
-func (c *Client) GetTrace(ctx context.Context, traceID string, start, end time.Time) (*JaegerResponse, error) {
-	params := url.Values{}
-	if !start.IsZero() {
-		params.Set("start", strconv.FormatInt(start.UnixMicro(), 10))
-	}
-	if !end.IsZero() {
-		params.Set("end", strconv.FormatInt(end.UnixMicro(), 10))
-	}
-
-	var result JaegerResponse
-	if err := c.get(ctx, "/select/jaeger/api/traces/"+traceID, params, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
 // tagsToJSON converts a space-separated "key=value" tag string into the JSON
 // object expected by the Jaeger search API. The "span_attr:" prefix is stripped
 // because Jaeger matches span tags by their bare name; other prefixes

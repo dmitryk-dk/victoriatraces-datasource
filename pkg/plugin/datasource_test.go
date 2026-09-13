@@ -87,9 +87,6 @@ func (m *mockClient) QueryFacet(_ context.Context, _, _ string, _ int, _, _ stri
 	}
 	return io.NopCloser(strings.NewReader(m.facetNDJSON)), nil
 }
-func (m *mockClient) GetTrace(_ context.Context, _ string, _, _ time.Time) (*JaegerResponse, error) {
-	return m.traces, m.err
-}
 func (m *mockClient) GetDependencies(_ context.Context, _, _ int64) (*JaegerDependenciesResponse, error) {
 	return m.dependencies, m.err
 }
@@ -218,8 +215,11 @@ func TestQueryData(t *testing.T) {
 			checkRefID: "A",
 		},
 		{
-			name:    "traceId returns trace + nodes + edges",
-			client:  &mockClient{traces: traces},
+			name: "traceId returns trace + nodes + edges",
+			client: &mockClient{
+				traceListNDJSON: `{"trace_id":"abc123","span_id":"s1","name":"op","resource_attr:service.name":"checkout"}` + "\n" +
+					`{"trace_id":"abc123","span_id":"s2","parent_span_id":"s1","name":"child","resource_attr:service.name":"cart"}` + "\n",
+			},
 			queries: []backend.DataQuery{makeQuery(t, "B", queryModel{QueryType: queryTypeTraceID, TraceID: "abc123"})},
 			check: func(t *testing.T, r backend.DataResponse) {
 				assert.Nil(t, r.Error)
@@ -266,6 +266,25 @@ func TestQueryData(t *testing.T) {
 				assert.Equal(t, "trace_charts", r.Frames[0].Name)
 			},
 			checkRefID: "F",
+		},
+		{
+			// One path for a trace, whichever way it is asked for: the panel's
+			// resource and this query both read the stored spans, so a trace
+			// that one can show the other can too.
+			name: "traceId builds the trace from the stored spans",
+			client: &mockClient{
+				traceListNDJSON: `{"trace_id":"abc","span_id":"s1","name":"POST /order",` +
+					`"start_time_unix_nano":"1700000000000000000","duration":"25000000",` +
+					`"resource_attr:service.name":"checkout"}` + "\n",
+			},
+			queries: []backend.DataQuery{makeQuery(t, "G", queryModel{QueryType: queryTypeTraceID, TraceID: "abc"})},
+			check: func(t *testing.T, r backend.DataResponse) {
+				assert.Nil(t, r.Error)
+				require.Len(t, r.Frames, 3)
+				assert.Equal(t, "traces", r.Frames[0].Name)
+				assert.Equal(t, 1, r.Frames[0].Rows())
+			},
+			checkRefID: "G",
 		},
 		{
 			name:        "traceId without ID errors",

@@ -95,24 +95,33 @@ func (d *Datasource) queryTrace(ctx context.Context, query backend.DataQuery, qm
 		return backend.ErrDataResponse(backend.StatusBadRequest, "traceId is required")
 	}
 
-	resp, err := d.client.GetTrace(ctx, qm.TraceID, query.TimeRange.From, query.TimeRange.To)
+	// The stored spans, not the Jaeger API: the same source the trace-detail
+	// resource reads, so a trace one of them can show the other can too, and a
+	// trace still being ingested comes back partial rather than as an error.
+	body, err := d.client.QueryLogsQLStream(
+		ctx,
+		buildTraceSpansQuery(qm.TraceID),
+		query.TimeRange.From.Format(time.RFC3339Nano),
+		query.TimeRange.To.Format(time.RFC3339Nano),
+	)
 	if err != nil {
 		if r, ok := cancelledResponse(ctx, err); ok {
 			return r
 		}
-		if IsNotFound(err) {
-			return backend.ErrDataResponse(backend.StatusNotFound, fmt.Sprintf("trace %q not found — it may have expired or not yet been ingested", qm.TraceID))
-		}
 		return backend.ErrDataResponse(backend.StatusInternal, fmt.Sprintf("fetching trace: %v", err))
 	}
-	// VictoriaTraces can also return 200 with an empty Data slice — surface
-	// the same friendly NotFound response in that case.
-	if len(resp.Data) == 0 {
-		return backend.ErrDataResponse(backend.StatusNotFound, fmt.Sprintf("trace %q not found", qm.TraceID))
+	trace, err := parseTraceFromSpans(qm.TraceID, body)
+	closeBody(body)
+	if err != nil {
+		return backend.ErrDataResponse(backend.StatusInternal, fmt.Sprintf("parsing trace: %v", err))
 	}
+	if len(trace.Spans) == 0 {
+		return backend.ErrDataResponse(backend.StatusNotFound, fmt.Sprintf("trace %q not found — it may have expired or not yet been ingested", qm.TraceID))
+	}
+	traces := []JaegerTrace{trace}
 
-	traceFrame := TracesToFrame(resp.Data)
-	nodesFrame, edgesFrame := TraceToNodeGraphFrames(resp.Data)
+	traceFrame := TracesToFrame(traces)
+	nodesFrame, edgesFrame := TraceToNodeGraphFrames(traces)
 	return backend.DataResponse{Frames: data.Frames{traceFrame, nodesFrame, edgesFrame}}
 }
 

@@ -121,25 +121,6 @@ func TestClient_RequestShapes(t *testing.T) {
 				require.NoError(t, err)
 			},
 		},
-		{
-			name: "GetTrace by ID",
-			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
-				assert.Equal(t, "/select/jaeger/api/traces/abc123", r.URL.Path)
-				// The range is required: without it the upstream reports the
-				// trace as out of retention rather than searching for it.
-				assert.Equal(t, "0", r.URL.Query().Get("start"))
-				assert.Equal(t, "60000000", r.URL.Query().Get("end"))
-				_ = json.NewEncoder(w).Encode(JaegerResponse{
-					Data: []JaegerTrace{{TraceID: "abc123"}},
-				})
-			},
-			action: func(t *testing.T, c *Client) {
-				resp, err := c.GetTrace(context.Background(), "abc123", time.Unix(0, 0), time.Unix(60, 0))
-				require.NoError(t, err)
-				require.Len(t, resp.Data, 1)
-				assert.Equal(t, "abc123", resp.Data[0].TraceID)
-			},
-		},
 	})
 }
 

@@ -34,7 +34,6 @@ type victoriaTracesClient interface {
 	QueryOperationStats(ctx context.Context, service, start, end string) (io.ReadCloser, error)
 	QuerySpanList(ctx context.Context, where string, limit int, start, end string) (io.ReadCloser, error)
 	QueryFacet(ctx context.Context, where, field string, limit int, start, end string) (io.ReadCloser, error)
-	GetTrace(ctx context.Context, traceID string, start, end time.Time) (*JaegerResponse, error)
 	GetDependencies(ctx context.Context, endTs, lookback int64) (*JaegerDependenciesResponse, error)
 	GetFieldNames(ctx context.Context, service, rawQuery string, start, end time.Time) (*FieldNamesResponse, error)
 	GetFieldValues(ctx context.Context, field string, limit int, service, rawQuery string, start, end time.Time) (*FieldValuesResponse, error)
