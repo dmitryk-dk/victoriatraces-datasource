@@ -482,24 +482,24 @@ export function QueryEditor({ datasource, query, onChange, onRunQuery, data, app
 
       {/* ── Traces mode: filter bar ── */}
       {(q.queryType === 'traceList' || q.queryType === 'spanList') && (
-        <div className={styles.row}>
-          <RadioButtonGroup
-            options={entityOptions}
-            value={q.entity ?? 'traces'}
-            onChange={(entity) => applyTraceFilters({ entity })}
-            size="sm"
-          />
-          <TraceFilterBar
-            uid={datasource.uid}
-            range={{ start: range?.from.toISOString(), end: range?.to.toISOString() }}
-            services={q.services ?? []}
-            filters={q.traceFilters ?? []}
-            rawQuery={q.expr ?? ''}
-            onServicesChange={(services) => applyTraceFilters({ services })}
-            onFiltersChange={(traceFilters) => applyTraceFilters({ traceFilters })}
-            onRawQueryChange={(rawQuery) => applyTraceFilters({ rawQuery })}
-          />
-        </div>
+        <TraceFilterBar
+          uid={datasource.uid}
+          leading={
+            <RadioButtonGroup
+              options={entityOptions}
+              value={q.entity ?? 'traces'}
+              onChange={(entity) => applyTraceFilters({ entity })}
+              size="sm"
+            />
+          }
+          range={{ start: range?.from.toISOString(), end: range?.to.toISOString() }}
+          services={q.services ?? []}
+          filters={q.traceFilters ?? []}
+          rawQuery={q.expr ?? ''}
+          onServicesChange={(services) => applyTraceFilters({ services })}
+          onFiltersChange={(traceFilters) => applyTraceFilters({ traceFilters })}
+          onRawQueryChange={(rawQuery) => applyTraceFilters({ rawQuery })}
+        />
       )}
 
       {/* ── Search mode ── */}
@@ -525,6 +525,9 @@ export function QueryEditor({ datasource, query, onChange, onRunQuery, data, app
                 disabled={!q.serviceName}
               />
             </Field>
+          </div>
+
+          <div className={styles.row}>
             <Field
               label="Min duration"
               description="Only traces at least this long, e.g. 100ms"

@@ -11,7 +11,9 @@ jest.mock('./monaco-query-field/MonacoQueryFieldWrapper', () => ({
   MonacoQueryFieldWrapper: () => null,
 }));
 jest.mock('../trace-ui/components/TraceFilterBar', () => ({
-  TraceFilterBar: () => null,
+  // The bar itself is out of scope here, but the entity toggle is handed to it
+  // to render, so the stub has to pass that through or the editor looks empty.
+  TraceFilterBar: ({ leading }: { leading?: React.ReactNode }) => <>{leading}</>,
 }));
 
 const mockDatasource = {

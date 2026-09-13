@@ -43,6 +43,15 @@ function blankFilter(kind: TraceFilterKind): TraceFilter {
 
 interface Props {
   uid?: string;
+  /**
+   * Rendered at the head of the filter row.
+   *
+   * The entity toggle belongs to this bar visually but is owned by the query
+   * editor, and as a sibling it pushed the row across while the LogsQL field
+   * below started at the bar's own left edge — the field a reader most needs
+   * width for ended up the narrowest thing here.
+   */
+  leading?: React.ReactNode;
   /** Range on screen; key and value suggestions are scoped to it. */
   range?: MetaRange;
   services: string[];
@@ -55,6 +64,7 @@ interface Props {
 
 export function TraceFilterBar({
   uid,
+  leading,
   range,
   services,
   filters,
@@ -155,6 +165,7 @@ export function TraceFilterBar({
   return (
     <div className={styles.bar}>
       <div className={styles.row}>
+        {leading}
         <MultiSelect
           options={serviceOptions}
           value={services}
