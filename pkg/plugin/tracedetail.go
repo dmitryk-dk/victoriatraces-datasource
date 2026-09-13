@@ -210,10 +210,10 @@ func spanEvents(record map[string]string) []JaegerLog {
 			continue
 		}
 		kind, index := rest[:lastColon], rest[lastColon+1:]
-		switch {
-		case kind == "event_name":
+		switch kind {
+		case "event_name":
 			at(index).name = value
-		case kind == "event_time_unix_nano":
+		case "event_time_unix_nano":
 			at(index).nanos = value
 		default:
 			if attr, isAttr := strings.CutPrefix(kind, "event_attr:"); isAttr {
@@ -237,7 +237,7 @@ func spanEvents(record map[string]string) []JaegerLog {
 		return a < b
 	})
 
-	logs := []JaegerLog{}
+	var logs []JaegerLog
 	for _, index := range indexes {
 		b := buckets[index]
 		fields := b.fields
