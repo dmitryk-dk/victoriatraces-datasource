@@ -12,7 +12,7 @@ describe('appendFilter', () => {
   });
 
   it('replaces the existing tag on the same key', () => {
-    // Two equality filters on one key are ANDed and match nothing; visum keeps
+    // Two equality filters on one key are ANDed and match nothing; a map keyed
     // tags in a map, where a key can only be set once.
     expect(appendFilter([tag('http.method', 'GET')], tag('http.method', 'POST'))).toEqual([
       tag('http.method', 'POST'),

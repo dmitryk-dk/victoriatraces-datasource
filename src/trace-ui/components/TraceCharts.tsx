@@ -22,7 +22,7 @@ import { TracesHeatmap } from "./TracesHeatmap";
 import { TracesScatterPlot } from "./TracesScatterPlot";
 import type { ChartSelection } from "./heatmapGrid";
 
-/** Sample size for the scatter plot, as visum's DEFAULT_SCATTER_LIMIT. */
+/** Sample size for the scatter plot. */
 const SCATTER_LIMIT = 1000;
 
 export type ChartView =
@@ -40,6 +40,8 @@ interface Props {
   view: ChartView;
   onViewChange: (view: ChartView) => void;
   where: string;
+  /** Whether the list below these charts holds traces or spans. */
+  entity?: 'traces' | 'spans';
   timeRange: TimeRange;
   rows: TraceListRow[];
   onSelectTrace?: (row: TraceListRow) => void;
@@ -58,6 +60,7 @@ export function TraceCharts({
   view,
   onViewChange,
   where,
+  entity = 'traces',
   timeRange,
   rows,
   onSelectTrace,
@@ -82,6 +85,7 @@ export function TraceCharts({
     endIso,
     startMs,
     endMs,
+    entity,
   );
   // The operations table is service-scoped; default to the busiest service in
   // the loaded rows so the view is useful before anything is picked.

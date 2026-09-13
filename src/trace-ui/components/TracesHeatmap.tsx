@@ -26,7 +26,7 @@ import {
   type PxRect,
 } from './chartSelection';
 
-// The whole grid is this tall whatever the bin count, as visum's is: every
+// The whole grid is this tall whatever the bin count: every
 // duration band is drawn, and at a fixed row height sixteen of them would push
 // the trace list out of a panel's viewport.
 /** Floor for the grid: below this the bands are thinner than a pixel each. */
@@ -93,7 +93,7 @@ export function TracesHeatmap({ data, selection, onSelectionChange }: Props) {
 
   const { rows, minCount, maxCount } = useMemo(() => heatmapRows(cells, yBins), [cells, yBins]);
 
-  // Five labels up the band axis, as visum: one per band is unreadable.
+  // Five labels up the band axis: one per band is unreadable.
   const durationTicks = useMemo(() => durationAxisTicks(edgesNs), [edgesNs]);
 
   const ticks = useMemo(

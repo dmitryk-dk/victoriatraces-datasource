@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
-import { of, throwError } from 'rxjs';
+import { of, Subject, throwError } from 'rxjs';
 
 import { TraceSummary } from '../types/trace';
 import { fetchResource } from './resource';
@@ -7,6 +7,7 @@ import { traceLookupWindow, useFieldNames, useFieldValues, useTrace, useTraceSea
 
 jest.mock('./resource', () => ({
   fetchResource: jest.fn(),
+  invalidateResource: jest.fn(),
 }));
 
 const mockFetchResource = fetchResource as jest.MockedFunction<typeof fetchResource>;
@@ -194,5 +195,100 @@ describe('autocomplete scoping', () => {
       start: RANGE.start,
       end: RANGE.end,
     });
+  });
+});
+
+
+describe('useTrace while a trace is still arriving', () => {
+  const window = { start: '2026-09-13T10:00:00Z', end: '2026-09-13T11:00:00Z' };
+
+  const rootless = {
+    traceID: 't1',
+    spans: [
+      { spanID: 's1', references: [{ spanID: 's2' }] },
+      { spanID: 's2', references: [{ spanID: 's1' }] },
+    ],
+    processes: {},
+  };
+  const rooted = {
+    traceID: 't1',
+    spans: [{ spanID: 's1', references: [] }],
+    processes: {},
+  };
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it('asks again until the trace has a span to hang the waterfall from', async () => {
+    // A trace still being ingested answers with more the next time it is
+    // asked; without this the view shows a partial trace until reloaded.
+    mockFetchResource.mockReturnValueOnce(of(rootless) as never).mockReturnValue(of(rooted) as never);
+
+    const { result } = renderHook(() => useTrace('uid', 't1', window));
+    await waitFor(() => expect(result.current.data).toBeDefined());
+    expect(mockFetchResource).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      jest.advanceTimersByTime(1_500);
+    });
+
+    expect(mockFetchResource).toHaveBeenCalledTimes(2);
+    expect(result.current.data).toEqual(rooted);
+  });
+
+  it('keeps showing the trace it has while it asks again', async () => {
+    // Blanking the view on every retry is what turns a trace that never gains
+    // a root into a permanent loading bar. A real request does not answer in
+    // the same tick, so the retry is modelled with one that has not answered
+    // yet.
+    const pending = new Subject<unknown>();
+    mockFetchResource.mockReturnValueOnce(of(rootless) as never).mockReturnValue(pending as never);
+
+    const { result } = renderHook(() => useTrace('uid', 't1', window));
+    await waitFor(() => expect(result.current.data).toEqual(rootless));
+
+    await act(async () => {
+      jest.advanceTimersByTime(1_500);
+    });
+
+    expect(mockFetchResource).toHaveBeenCalledTimes(2);
+    expect(result.current.data).toEqual(rootless);
+    expect(result.current.loading).toBe(true);
+  });
+
+  it('gives up rather than asking forever', async () => {
+    // A trace whose root sits outside the lookup window never gains one, and
+    // retrying every 1.5s for as long as the tab is open costs more than the
+    // trace is worth.
+    mockFetchResource.mockReturnValue(of(rootless) as never);
+
+    renderHook(() => useTrace('uid', 't1', window));
+    await waitFor(() => expect(mockFetchResource).toHaveBeenCalledTimes(1));
+
+    for (let i = 0; i < 30; i++) {
+      await act(async () => {
+        jest.advanceTimersByTime(1_500);
+      });
+    }
+
+    expect(mockFetchResource.mock.calls.length).toBeLessThanOrEqual(11);
+  });
+
+  it('stops asking once the trace is whole', async () => {
+    mockFetchResource.mockReturnValue(of(rooted) as never);
+
+    renderHook(() => useTrace('uid', 't1', window));
+    await waitFor(() => expect(mockFetchResource).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      jest.advanceTimersByTime(10_000);
+    });
+
+    expect(mockFetchResource).toHaveBeenCalledTimes(1);
   });
 });

@@ -11,6 +11,8 @@ export interface ResourceState<T> {
 interface Options {
   /** When false the request is not made and any previous result is dropped. */
   enabled?: boolean;
+  /** Changing this re-runs the request; the caller drops the cached entry first. */
+  reloadToken?: number;
 }
 
 /**
@@ -21,7 +23,7 @@ export function useResource<T>(
   uid: string | undefined,
   path: string,
   params?: ResourceParams,
-  { enabled = true }: Options = {}
+  { enabled = true, reloadToken = 0 }: Options = {}
 ): ResourceState<T> {
   const [state, setState] = useState<ResourceState<T>>({ loading: false });
 
@@ -35,7 +37,9 @@ export function useResource<T>(
       return;
     }
 
-    setState({ loading: true });
+    // A reload keeps what is already on screen: blanking it makes a view that
+    // refreshes itself flash a loader on every pass.
+    setState((previous) => ({ ...previous, loading: true, error: undefined }));
 
     const subscription = fetchResource<T>(uid, path, JSON.parse(paramsKey)).subscribe({
       next: (data) => setState({ data, loading: false }),
@@ -43,7 +47,9 @@ export function useResource<T>(
     });
 
     return () => subscription.unsubscribe();
-  }, [uid, path, paramsKey, enabled]);
+    // reloadToken is not read here: changing it is the request to run again,
+    // which a caller does after dropping the cached entry.
+  }, [uid, path, paramsKey, enabled, reloadToken]);
 
   return state;
 }

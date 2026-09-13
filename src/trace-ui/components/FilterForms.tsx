@@ -78,7 +78,7 @@ export function FilterForm({
     filter?.kind === "limit" ? String(filter.value) : "50",
   );
 
-  // Field-filter state, mirroring visum's Field / Custom / All modes.
+  // Field-filter state: the Field / Custom / All modes.
   const [mode, setMode] = useState<FilterMode>(
     filter?.kind === "field" ? filter.mode : "field",
   );

@@ -38,7 +38,7 @@ describe('paletteIndex', () => {
   });
 
   it('scales linearly between the least and most busy cells', () => {
-    // visum ramps linearly across the populated range; the quietest cell sits
+    // The ramp is linear across the populated range; the quietest cell sits
     // at the bottom of the ramp rather than in the middle of it.
     expect(paletteIndex(1, 1, 100)).toBe(0);
     expect(paletteIndex(50, 1, 100)).toBe(Math.floor((PALETTE_STEPS * 49) / 99));
@@ -108,7 +108,7 @@ describe('timeAxisTicks at sub-minute steps', () => {
 });
 
 describe('durationAxisTicks', () => {
-  // Bands are log-spaced; visum labels five positions (0, ¼, ½, ¾, 1 of the
+  // Bands are log-spaced; five positions are labelled (0, ¼, ½, ¾, 1 of the
   // band axis) rather than every band, which is unreadable at 16 bands.
   const edgesNs = Array.from({ length: 16 }, (_, i) => 1_000 * 10 ** (i / 2));
 

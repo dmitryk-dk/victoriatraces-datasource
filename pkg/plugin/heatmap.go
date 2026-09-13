@@ -61,27 +61,54 @@ func heatmapDurationCond(k int) string {
 	}
 }
 
+// entityKind is what a row of the list below the chart stands for.
+type entityKind string
+
+const (
+	entityTraces entityKind = "traces"
+	entitySpans  entityKind = "spans"
+)
+
+// parseEntity reads the list's entity from a request, defaulting to traces.
+func parseEntity(raw string) entityKind {
+	if raw == string(entitySpans) {
+		return entitySpans
+	}
+	return entityTraces
+}
+
 // buildHeatmapQuery counts traces per (time bucket, duration bin), plus how
 // many of them contain an error.
 //
 // count_uniq(trace_id) rather than count(): a trace can map to more than one
 // root-span row (duplicate ingestion, two roots, an empty parent_span_id), and
 // a plain count would then disagree with the trace list below the chart.
-func buildHeatmapQuery(where string, stepSeconds int64) string {
+func buildHeatmapQuery(where string, stepSeconds int64, entity entityKind) string {
 	if where == "" {
 		where = defaultTraceListWhere
 	}
-	// Root spans only. The chart sits above a list of traces, so its y axis has
-	// to be trace duration; counting every span would place one trace in
-	// several duration bins and make the totals disagree with the list.
-	where += " AND " + rootSpanOnly
+
+	// What the chart counts has to be what the list below it shows.
+	//
+	// Over traces: root spans only, because the y axis is trace duration and
+	// counting every span would put one trace in several duration bins; and
+	// distinct trace ids, because `count()` over-counts a trace that maps to
+	// more than one root span. Over spans: every span counts once, and a span
+	// either failed or it did not — there is no trace to look inside.
+	countFn := "count_uniq(trace_id)"
 	errorCond := traceContainsSubqueryGo("status_code:2")
+	if entity == entitySpans {
+		countFn = "count()"
+		errorCond = "status_code:2"
+	} else {
+		where += " AND " + rootSpanOnly
+	}
 
 	clauses := make([]string, 0, heatmapYBins*2)
 	for k := 0; k < heatmapYBins; k++ {
 		cond := heatmapDurationCond(k)
-		clauses = append(clauses, fmt.Sprintf("count_uniq(trace_id) if (%s) b%d", cond, k))
-		clauses = append(clauses, fmt.Sprintf("count_uniq(trace_id) if (%s %s) e%d", cond, errorCond, k))
+		clauses = append(clauses, fmt.Sprintf("%s if (%s) b%d", countFn, cond, k))
+		clauses = append(clauses, fmt.Sprintf("%s if (%s %s) e%d", countFn, cond, errorCond, k))
 	}
 
 	return fmt.Sprintf("%s | stats by (_time:%ds) %s", where, stepSeconds, strings.Join(clauses, ", "))

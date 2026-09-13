@@ -5,7 +5,7 @@ import {
   serializeFieldCondition,
 } from './fieldFilter';
 
-// These assertions pin the output to what visum's serializer produces, so the
+// These assertions pin the exact LogsQL each operator produces, so the
 // two products build identical LogsQL from the same filter.
 
 describe('quoteString', () => {

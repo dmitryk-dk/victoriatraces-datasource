@@ -1,6 +1,6 @@
-// Scale and palette helpers ported from visum's TracesHeatmap. The colour
-// endpoints come from the Grafana theme rather than visum's hardcoded hex, so
-// the grid reads correctly in both light and dark.
+// Scale and palette helpers for the heatmap. The colour endpoints come from
+// the Grafana theme rather than fixed hex values, so the grid reads correctly
+// in both light and dark.
 
 import { formatMicros } from '../utils/format';
 
@@ -34,7 +34,7 @@ export function interpolateColor(color1: string, color2: string, factor = 0.5): 
   );
 }
 
-/** A 16-step ramp between two colours, matching visum's density scale. */
+/** A 16-step ramp between two colours: the density scale. */
 export function makePalette(from: string, to: string): string[] {
   return Array.from({ length: PALETTE_STEPS }, (_, i) =>
     interpolateColor(from, to, i / (PALETTE_STEPS - 1))
@@ -43,7 +43,7 @@ export function makePalette(from: string, to: string): string[] {
 
 /**
  * Picks the palette step for a count, ramping linearly across the range the
- * populated cells actually span — visum's `valueToFillIndex`. Scaling from the
+ * populated cells actually span. Scaling from the
  * quietest cell rather than from zero uses the whole ramp on a grid whose
  * counts are all large.
  */
@@ -59,7 +59,7 @@ export function paletteIndex(count: number, minCount: number, maxCount: number):
 }
 
 // Tick increments that land on whole seconds, minutes and hours rather than
-// arbitrary offsets. Ported from visum.
+// arbitrary offsets.
 const X_TICK_INCRS_MS = [
   1000, 2000, 5000, 10000, 15000, 30000, 60000, 120000, 300000, 600000, 900000, 1800000, 3600000,
   7200000, 10800000, 21600000, 43200000, 86400000,
@@ -120,7 +120,7 @@ export interface DurationTick extends AxisTick {
  * Duration labels up the heatmap's band axis.
  *
  * The bands are log-spaced, so a duration between two edges is interpolated in
- * log space. Five labels, as visum: one per band is unreadable at sixteen
+ * log space. Five labels: one per band is unreadable at sixteen
  * bands, and the bands themselves already show where a value sits.
  */
 export function durationAxisTicks(edgesNs: readonly number[], count = 5): DurationTick[] {

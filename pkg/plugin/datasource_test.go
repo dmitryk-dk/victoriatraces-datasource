@@ -63,7 +63,7 @@ func (m *mockClient) QueryOperationDurations(_ context.Context, _, _ string, _ b
 	}
 	return io.NopCloser(strings.NewReader(m.durationsNDJSON)), nil
 }
-func (m *mockClient) QueryHeatmap(_ context.Context, _ string, _ int64, _, _ string) (io.ReadCloser, error) {
+func (m *mockClient) QueryHeatmap(_ context.Context, _ string, _ int64, _, _ string, _ entityKind) (io.ReadCloser, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -160,6 +160,40 @@ func TestCheckHealth(t *testing.T) {
 	}
 }
 
+func TestResourceTraceReadsTheStoredSpans(t *testing.T) {
+	// The trace comes from LogsQL, not the Jaeger API: attributes, events and
+	// scope survive the round trip as stored, and a trace still being ingested
+	// answers with more the next time it is asked.
+	ds := &Datasource{client: &mockClient{
+		traceListNDJSON: `{"trace_id":"t1","span_id":"s1","name":"POST /order",` +
+			`"start_time_unix_nano":"1700000000000000000","duration":"25000000",` +
+			`"resource_attr:service.name":"checkout","span_attr:http.route":"/order"}` + "\n",
+	}}
+
+	sender := &mockSender{}
+	require.NoError(t, ds.CallResource(context.Background(), &backend.CallResourceRequest{Path: "trace/t1"}, sender))
+	require.Len(t, sender.responses, 1)
+	require.Equal(t, http.StatusOK, sender.responses[0].Status)
+
+	var trace JaegerTrace
+	require.NoError(t, json.Unmarshal(sender.responses[0].Body, &trace))
+	require.Len(t, trace.Spans, 1)
+	assert.Equal(t, "POST /order", trace.Spans[0].OperationName)
+	assert.Equal(t, "checkout", trace.Spans[0].ProcessID)
+	assert.Contains(t, trace.Spans[0].Tags, JaegerKeyValue{Key: "http.route", Type: "string", Value: "/order"})
+}
+
+func TestResourceTraceMissing(t *testing.T) {
+	// No spans is a normal outcome — the trace expired or never arrived — and
+	// the view says so rather than showing an empty waterfall.
+	ds := &Datasource{client: &mockClient{traceListNDJSON: ""}}
+
+	sender := &mockSender{}
+	require.NoError(t, ds.CallResource(context.Background(), &backend.CallResourceRequest{Path: "trace/t1"}, sender))
+	require.Len(t, sender.responses, 1)
+	assert.Equal(t, http.StatusNotFound, sender.responses[0].Status)
+}
+
 // --- QueryData ---
 
 func TestQueryData(t *testing.T) {
@@ -211,6 +245,12 @@ func TestQueryData(t *testing.T) {
 				// come first and the list sits under them.
 				assert.Equal(t, "trace_charts", r.Frames[0].Name)
 				assert.Equal(t, "trace_list", r.Frames[1].Name)
+				// Explore gives a custom panel no request, so the query it is
+				// showing has to travel on the frame.
+				for _, f := range r.Frames {
+					custom := f.Meta.Custom.(map[string]interface{})
+					assert.Contains(t, string(custom["query"].(json.RawMessage)), "traceList", f.Name)
+				}
 			},
 			checkRefID: "E",
 		},
@@ -332,9 +372,8 @@ func TestCallResource(t *testing.T) {
 		},
 		{
 			name: "trace returns the single trace",
-			client: &mockClient{traces: &JaegerResponse{Data: []JaegerTrace{
-				{TraceID: "abc", Spans: []JaegerSpan{{SpanID: "s1"}}},
-			}}},
+			// Read from the stored spans, not the Jaeger API.
+			client:     &mockClient{traceListNDJSON: `{"trace_id":"abc","span_id":"s1","name":"op"}` + "\n"},
 			req:        &backend.CallResourceRequest{Path: "trace/abc"},
 			wantStatus: http.StatusOK,
 			check: func(t *testing.T, body []byte) {

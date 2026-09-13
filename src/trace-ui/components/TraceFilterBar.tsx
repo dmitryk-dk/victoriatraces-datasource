@@ -3,6 +3,7 @@ import { GrafanaTheme2, SelectableValue } from '@grafana/data';
 import { Button, MultiSelect, useStyles2 } from '@grafana/ui';
 import { css } from '@emotion/css';
 
+import { createLogsqlFetchers } from '../../lang/logsql/fetchers';
 import { MonacoQueryFieldWrapper } from '../../components/monaco-query-field/MonacoQueryFieldWrapper';
 import { useFieldNames, useFieldValues, useOperations, useServices, type MetaRange } from '../api/traces';
 import { appendFilter, applyFilterAt } from '../filters/applyFilter';
@@ -15,7 +16,7 @@ import { TraceFilterBadge } from './TraceFilterBadge';
 const SINGLETON_KINDS = new Set<TraceFilterKind>(['error', 'limit', 'duration', 'spans']);
 
 // A filter being added exists as a badge with its form already open, before it
-// has any values. visum does the same: you see where the filter will land while
+// has any values: you see where the filter will land while
 // you fill it in. It only joins the real list once applied.
 const PENDING_INDEX = -1;
 
@@ -70,6 +71,10 @@ export function TraceFilterBar({
   const [pending, setPending] = useState<TraceFilter | null>(null);
   // The tag key whose values the value picker should offer.
   const [activeTagKey, setActiveTagKey] = useState<string>('');
+
+  // Suggestions for the LogsQL field, from the same datasource and range the
+  // filters are drawn from.
+  const logsqlFetchers = useMemo(() => createLogsqlFetchers(uid, range), [uid, range]);
 
   const serviceList = useServices(uid);
   // Operations are service-scoped; with several selected, offer the first
@@ -214,6 +219,7 @@ export function TraceFilterBar({
       <div className={styles.query}>
         <MonacoQueryFieldWrapper
           history={[]}
+          fetchers={logsqlFetchers}
           initialValue={rawQuery}
           placeholder="Filter with LogsQL…"
           onChange={onRawQueryChange}

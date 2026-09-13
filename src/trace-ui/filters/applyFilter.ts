@@ -4,8 +4,8 @@ import type { TraceFilter } from './types';
  * A tag key can only be filtered once.
  *
  * Tag conditions are ANDed, so two equality filters on one key match nothing.
- * visum keeps tags in a `Record<key, value>`, where setting a key overwrites
- * it; this is the same rule against a list.
+ * A map keyed by tag name would enforce that by construction, where setting a
+ * key overwrites it; this is the same rule against a list.
  */
 function sameTagKey(a: TraceFilter, b: TraceFilter): boolean {
   return a.kind === 'tag' && b.kind === 'tag' && a.key === b.key;

@@ -30,7 +30,7 @@ type victoriaTracesClient interface {
 	QueryTraceList(ctx context.Context, p TraceListParams) (io.ReadCloser, error)
 	QueryLogsQLStream(ctx context.Context, query, start, end string) (io.ReadCloser, error)
 	QueryOperationDurations(ctx context.Context, service, operation string, rootOnly bool, start, end string) (io.ReadCloser, error)
-	QueryHeatmap(ctx context.Context, where string, stepSeconds int64, start, end string) (io.ReadCloser, error)
+	QueryHeatmap(ctx context.Context, where string, stepSeconds int64, start, end string, entity entityKind) (io.ReadCloser, error)
 	QueryOperationStats(ctx context.Context, service, start, end string) (io.ReadCloser, error)
 	QuerySpanList(ctx context.Context, where string, limit int, start, end string) (io.ReadCloser, error)
 	QueryFacet(ctx context.Context, where, field string, limit int, start, end string) (io.ReadCloser, error)
@@ -473,7 +473,9 @@ func (d *Datasource) resourceHeatmap(ctx context.Context, qs url.Values, sender 
 
 	stepSeconds := heatmapStepSeconds(startMs, endMs)
 
-	body, err := d.client.QueryHeatmap(ctx, qs.Get("where"), stepSeconds, qs.Get("start"), qs.Get("end"))
+	// The chart counts what the list below it shows, so it needs to know
+	// whether that list holds traces or spans.
+	body, err := d.client.QueryHeatmap(ctx, qs.Get("where"), stepSeconds, qs.Get("start"), qs.Get("end"), parseEntity(qs.Get("entity")))
 	if err != nil {
 		return sendJSON(sender, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
@@ -530,19 +532,27 @@ func (d *Datasource) resourceTrace(ctx context.Context, traceID string, qs url.V
 	if traceID == "" {
 		return sendJSON(sender, http.StatusBadRequest, map[string]string{"error": "missing trace id"})
 	}
-	resp, err := d.client.GetTrace(ctx, traceID, parseRFC3339(qs.Get("start")), parseRFC3339(qs.Get("end")))
+	// The spans come from LogsQL rather than the Jaeger API: attributes, events
+	// and scope survive as stored, and a trace still being ingested answers
+	// with more the next time the view asks.
+	body, err := d.client.QueryLogsQLStream(ctx, buildTraceSpansQuery(traceID), qs.Get("start"), qs.Get("end"))
 	if err != nil {
-		// A 404 here means the trace expired or never arrived — a normal outcome
-		// worth distinguishing from a backend failure.
 		if IsNotFound(err) {
 			return sendJSON(sender, http.StatusNotFound, map[string]string{"error": "trace not found"})
 		}
 		return sendJSON(sender, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
-	if len(resp.Data) == 0 {
+	trace, err := parseTraceFromSpans(traceID, body)
+	closeBody(body)
+	if err != nil {
+		return sendJSON(sender, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	// A trace that expired or never arrived is a normal outcome, and one the
+	// view reports differently from a backend failure.
+	if len(trace.Spans) == 0 {
 		return sendJSON(sender, http.StatusNotFound, map[string]string{"error": "trace not found"})
 	}
-	return sendJSON(sender, http.StatusOK, resp.Data[0])
+	return sendJSON(sender, http.StatusOK, trace)
 }
 
 // resourceDependencies backs the service dependency graph. endTs and lookback

@@ -62,7 +62,7 @@ describe('pointPosition', () => {
 
 describe('bubbleDiameter', () => {
   it('grows with the square root of the span count', () => {
-    // visum: clamp(4 + sqrt(spans) * 1.4, 5, 20).
+    // clamp(4 + sqrt(spans) * 1.4, 5, 20).
     expect(bubbleDiameter(100)).toBe(18);
   });
 
@@ -124,7 +124,7 @@ describe('selectionToRect', () => {
 
 describe('durationTicks', () => {
   it('lands on round 1-2-5 durations inside the range', () => {
-    // Arbitrary tick values ("3.7ms") make a log axis unreadable; visum's
+    // Arbitrary tick values ("3.7ms") make a log axis unreadable; a
     // uPlot log axis labels round values only.
     const ticks = durationTicks(1_000, 1_000_000);
     for (const tick of ticks) {

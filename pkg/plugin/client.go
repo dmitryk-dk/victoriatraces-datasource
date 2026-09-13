@@ -252,9 +252,9 @@ func (c *Client) QueryOperationDurations(ctx context.Context, service, operation
 
 // QueryHeatmap runs the duration/time grid aggregation and returns the raw
 // NDJSON body. The caller must close the returned ReadCloser.
-func (c *Client) QueryHeatmap(ctx context.Context, where string, stepSeconds int64, start, end string) (io.ReadCloser, error) {
+func (c *Client) QueryHeatmap(ctx context.Context, where string, stepSeconds int64, start, end string, entity entityKind) (io.ReadCloser, error) {
 	params := url.Values{}
-	params.Set("query", buildHeatmapQuery(where, stepSeconds))
+	params.Set("query", buildHeatmapQuery(where, stepSeconds, entity))
 	if start != "" {
 		params.Set("start", start)
 	}

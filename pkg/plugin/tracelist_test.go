@@ -477,7 +477,7 @@ func TestBuildTraceSampleQuery(t *testing.T) {
 	t.Run("orders by trace id so the sample spreads across the range", func(t *testing.T) {
 		// Ordering by time returns only the newest N, which on a busy source
 		// is a few seconds' worth — every point lands on the right edge of the
-		// scatter plot. visum samples by trace id for the same reason.
+		// scatter plot.
 		q := buildTraceSampleQuery("", 1000)
 		assert.Contains(t, q, "| sort by (trace_id) | limit 1000")
 		assert.NotContains(t, q, "sort by (startTime desc)")

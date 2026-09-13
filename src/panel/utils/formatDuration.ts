@@ -4,9 +4,10 @@ const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
 
 /**
- * A duration in milliseconds, in the unit that reads best at its magnitude —
- * visum's ladder, which keeps two decimals all the way up rather than
- * collapsing long traces into "150m 0s".
+ * A duration in milliseconds, in the unit that reads best at its magnitude.
+ *
+ * Two decimals all the way up, rather than collapsing long traces into
+ * "150m 0s".
  *
  * Examples: 0.45 → "450µs", 1.5 → "1.50ms", 1500 → "1.50s", 9e6 → "2.50h".
  */
@@ -20,7 +21,7 @@ export function formatDurationMs(ms: number): string {
   if (ms < MINUTE_MS) {
     return `${(ms / SECOND_MS).toFixed(2)}s`;
   }
-  // Half an hour reads better in hours than in minutes, as it does in visum.
+  // Half an hour reads better in hours than in minutes.
   if (ms < HOUR_MS / 2) {
     return `${(ms / MINUTE_MS).toFixed(2)}min`;
   }

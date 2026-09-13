@@ -145,7 +145,7 @@ export function SpanDuration({
 
   const pLeft = fullDuration > 0 ? ((span.startTime - minMs) / fullDuration) * 100 : 0;
   const pRight = fullDuration > 0 ? ((maxMs - (span.startTime + span.duration)) / fullDuration) * 100 : 0;
-  // visum's floor: a span thousands of times shorter than the trace still has
+  // A floor: a span thousands of times shorter than the trace still has
   // to be wide enough to see and to hover.
   const pWidth = Math.max(MIN_BAR_PCT, 100 - pLeft - pRight);
 

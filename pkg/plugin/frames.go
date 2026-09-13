@@ -600,3 +600,24 @@ func TraceChartsFrame(dsUID string) *data.Frame {
 	})
 	return frame
 }
+
+// withQueryContext records the query a frame answers in its metadata.
+//
+// Explore builds a custom panel's data as {series, state, timeRange}: there is
+// no request on it, so `data.request.targets` — where the panels used to read
+// the services, filters and columns in force — is always undefined there. The
+// frame is the only channel that survives, so the executed query travels on it.
+func withQueryContext(frame *data.Frame, query json.RawMessage) {
+	if frame == nil {
+		return
+	}
+	if frame.Meta == nil {
+		frame.Meta = &data.FrameMeta{}
+	}
+	custom, ok := frame.Meta.Custom.(map[string]interface{})
+	if !ok {
+		custom = map[string]interface{}{}
+	}
+	custom["query"] = query
+	frame.Meta.Custom = custom
+}

@@ -581,10 +581,14 @@ func (d *Datasource) querySpanList(ctx context.Context, query backend.DataQuery,
 		return backend.ErrDataResponse(backend.StatusInternal, fmt.Sprintf("parsing span list: %v", err))
 	}
 
-	return backend.DataResponse{Frames: data.Frames{
+	frames := data.Frames{
 		TraceChartsFrame(dsUID),
 		SpanListRowsToFrame(rows, qm.CustomFields, dsUID),
-	}}
+	}
+	for _, frame := range frames {
+		withQueryContext(frame, query.JSON)
+	}
+	return backend.DataResponse{Frames: frames}
 }
 
 // queryTraceList runs the per-trace LogsQL aggregation behind the trace list.
@@ -622,10 +626,14 @@ func (d *Datasource) queryTraceList(ctx context.Context, query backend.DataQuery
 
 	// The charts frame comes first: Explore stacks custom panels in the order
 	// their frames arrive, so the charts sit above the list they describe.
-	return backend.DataResponse{Frames: data.Frames{
+	frames := data.Frames{
 		TraceChartsFrame(dsUID),
 		TraceListRowsToFrame(rows, qm.CustomFields, dsUID),
-	}}
+	}
+	for _, frame := range frames {
+		withQueryContext(frame, query.JSON)
+	}
+	return backend.DataResponse{Frames: frames}
 }
 
 func (d *Datasource) querySearch(ctx context.Context, query backend.DataQuery, qm queryModel) backend.DataResponse {

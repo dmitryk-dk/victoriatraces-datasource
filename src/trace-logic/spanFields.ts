@@ -14,7 +14,7 @@ const UNPREFIXED = 'other';
 
 /**
  * Span attributes grouped by their dotted namespace and filtered by a search
- * string, as visum's field list shows them.
+ * string.
  *
  * A span can carry dozens of attributes; grouped by namespace they can be
  * skimmed, and the search covers values as well as names because "which field

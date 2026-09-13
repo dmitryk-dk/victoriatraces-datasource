@@ -60,7 +60,7 @@ export interface FieldKeyOption {
 }
 
 /**
- * Field choices for the Field filter, as visum's key picker builds them: the
+ * Field choices for the Field filter: the
  * bare name is shown, the storage name is what the filter carries. A filter on
  * the bare name matches nothing, because only the prefixed field exists.
  */
@@ -78,12 +78,12 @@ export function fieldKeyOptions(names: readonly FieldName[]): FieldKeyOption[] {
       label: normalizeTagKey(value),
       value,
       // The count is how a reader tells a key most spans carry from one a
-      // handful do, which is what visum's picker shows.
+      // handful do.
       description: hits > 0 ? `${where} · ${hits} ${hits === 1 ? 'span' : 'spans'}` : where,
       hits,
     });
   }
-  // Most-used first, as visum's key picker orders them; the name breaks ties
+  // Most-used first; the name breaks ties
   // so a list with no counts at all stays alphabetical.
   options.sort((a, b) => b.hits - a.hits || a.label.localeCompare(b.label) || a.value.localeCompare(b.value));
   return options.map(({ hits: _hits, ...option }) => option);

@@ -91,7 +91,8 @@ const MIN_TICK_GAP_PCT = 15;
 /**
  * Round duration labels for the log y axis.
  *
- * Only 1-2-5 values are labelled, the way uPlot labels a log scale in visum: a
+ * Only 1-2-5 values are labelled, the way a plotting library labels a log
+ * scale: a
  * tick at "3.7ms" tells a reader nothing they can compare against. Labels are
  * chosen from the slowest down, because that is the end a reader looks at
  * first, and any that would land within `MIN_TICK_GAP_PCT` of the one above is
@@ -150,7 +151,7 @@ export function durationTicks(minMicros: number, maxMicros: number, maxTicks = 6
   return kept.reverse();
 }
 
-/** Bubble diameter for a trace's span count, as visum's diameterForSpans. */
+/** Bubble diameter for a trace's span count. */
 export function bubbleDiameter(spans: number): number {
   return clamp(4 + Math.sqrt(Math.max(spans, 0)) * 1.4, 5, 20);
 }

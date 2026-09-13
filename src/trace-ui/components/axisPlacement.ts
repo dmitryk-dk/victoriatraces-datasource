@@ -6,7 +6,7 @@ import type { CSSProperties } from 'react';
  * A label is centred on its tick, which puts half of an end label outside the
  * plot: the topmost duration collides with whatever sits above the chart, and
  * the first clock time hangs off the left edge. The two ends are therefore
- * pinned inside instead of centred — the same thing uPlot does for visum.
+ * pinned inside instead of centred, as a plotting library would.
  */
 
 /** Within this much of an end, a label is pinned rather than centred. */

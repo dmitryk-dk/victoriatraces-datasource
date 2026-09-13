@@ -13,7 +13,7 @@ export interface LabelledMark extends TimelineMark {
 
 /**
  * Rounds a raw step up to 1, 2, 5 or 10 times a power of ten, so ticks read as
- * "100ms" rather than "142ms". Ported from visum's niceTimeStep.
+ * "100ms" rather than "142ms".
  */
 export function niceTimeStep(raw: number): number {
   if (raw <= 0) {

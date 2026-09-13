@@ -27,6 +27,19 @@ export function rebuildTarget(prev: any, next: any) {
   };
 }
 
+/**
+ * Changes some fields of a query, keeping the rest.
+ *
+ * For edits that stay in the same mode — a facet ticked, a filter drilled, a
+ * column added. `rebuildTarget` is the wrong tool there: it keeps only what it
+ * is handed, so an edit silently dropped `services`, `entity`, `expr` and
+ * `customFields`, and the sidebar, which reads its ticks back off the query,
+ * showed nothing selected.
+ */
+export function patchTarget(prev: any, next: any) {
+  return { ...prev, ...next };
+}
+
 export function navigateExplore(rebuild: (prev: any) => any) {
   const search = locationService.getSearch();
 
@@ -72,6 +85,30 @@ export function navigateExplore(rebuild: (prev: any) => any) {
 }
 
 
+/**
+ * The query a panel is showing.
+ *
+ * Explore builds a custom panel's data as {series, state, timeRange} — there is
+ * no request on it — so `data.request.targets` is undefined there and the
+ * services, filters, columns and derived LogsQL have to be read off the frame,
+ * where the backend records the query it answered. Dashboards do pass a
+ * request, and it is preferred: it is the query as it stands right now, while
+ * the frame's is the one the last run used.
+ */
+export function queryFromData<T>(data: {
+  series: Array<{ meta?: { custom?: unknown } }>;
+  request?: { targets?: unknown[] };
+}): T | undefined {
+  const fromRequest = data.request?.targets?.[0] as T | undefined;
+  if (fromRequest) {
+    return fromRequest;
+  }
+  const carried = data.series
+    .map((f) => (f.meta?.custom as { query?: unknown } | undefined)?.query)
+    .find(Boolean);
+  return carried as T | undefined;
+}
+
 /** The datasource uid a panel should make its resource calls against. */
 export function datasourceUidFromData(data: {
   series: Array<{ meta?: { custom?: unknown }; fields?: any[] }>;
@@ -107,7 +144,7 @@ export function addFiltersToQuery(
     const kept = current.filter((f) => !replaceKinds.has(f.kind));
     const filters = [...kept, ...added];
     const derived = buildTraceListQuery({ filters, services, rawQuery: q.expr ?? '' });
-    return rebuildTarget(q, {
+    return patchTarget(q, {
       traceFilters: filters,
       where: derived.where,
       postFilter: derived.postFilter,

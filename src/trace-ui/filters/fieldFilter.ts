@@ -1,4 +1,4 @@
-// Ported from visum's LogsQLEditor (operators.ts + serialize.ts) so the two
+// The operator set and its serialization, kept in one place so the editor and
 // products generate identical LogsQL for the same filter.
 
 export type FilterOperator =
@@ -54,7 +54,7 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/** Renders one field comparison as LogsQL, exactly as visum serializes it. */
+/** Renders one field comparison as LogsQL. */
 export function serializeFieldCondition(
   field: string,
   operator: FilterOperator,

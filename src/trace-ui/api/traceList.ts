@@ -229,11 +229,13 @@ export function useHeatmap(
   start: string | undefined,
   end: string | undefined,
   startMs: number,
-  endMs: number
+  endMs: number,
+  /** What a row of the list below the chart stands for. */
+  entity: 'traces' | 'spans' = 'traces'
 ): ResourceState<HeatmapData> {
   const params = useMemo(
-    () => ({ where, start, end, startMs, endMs }),
-    [where, start, end, startMs, endMs]
+    () => ({ where, start, end, startMs, endMs, entity }),
+    [where, start, end, startMs, endMs, entity]
   );
   return useResource<HeatmapData>(uid, 'heatmap', params, {
     enabled: Boolean(start) && Boolean(end) && endMs > startMs,

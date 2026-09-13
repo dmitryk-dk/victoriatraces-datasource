@@ -56,9 +56,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Faceted filter sidebar: Service and Operation values present in the range with the number of
   traces carrying each, plus span type and errors-only, and Traces/Spans tabs. Backed by a new
   `facets` datasource resource.
-- Generic field filter with visum's operator set — exists, equals, not equals, contains, has
-  prefix, has suffix, regexp — in Field, Custom and All modes. The LogsQL it generates is
-  ported from visum's serializer, so both products build the same query.
+- Generic field filter — exists, equals, not equals, contains, has prefix, has suffix,
+  regexp — in Field, Custom and All modes, each serialized to LogsQL.
 - Heatmap chrome: time axis, a clickable Errors/OK legend that isolates one kind, and a
   density scale showing the busiest cell. Charts are tabs and can be collapsed.
 - Trace preview header: trace ID, root service and operation, span count, and a full-width

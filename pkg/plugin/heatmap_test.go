@@ -46,7 +46,7 @@ func TestHeatmapStepSeconds(t *testing.T) {
 }
 
 func TestBuildHeatmapQuery(t *testing.T) {
-	q := buildHeatmapQuery("", 60)
+	q := buildHeatmapQuery("", 60, entityTraces)
 
 	t.Run("buckets by the requested step", func(t *testing.T) {
 		assert.Contains(t, q, "| stats by (_time:60s)")
@@ -67,7 +67,7 @@ func TestBuildHeatmapQuery(t *testing.T) {
 	})
 
 	t.Run("keeps a caller-supplied where clause", func(t *testing.T) {
-		assert.True(t, strings.HasPrefix(buildHeatmapQuery("status_code:2", 5), "status_code:2 AND "+rootSpanOnly))
+		assert.True(t, strings.HasPrefix(buildHeatmapQuery("status_code:2", 5, entityTraces), "status_code:2 AND "+rootSpanOnly))
 	})
 
 	t.Run("restricts the y axis to trace duration", func(t *testing.T) {
@@ -75,6 +75,22 @@ func TestBuildHeatmapQuery(t *testing.T) {
 		// the chart totals no longer match the trace list.
 		assert.Contains(t, q, rootSpanOnly)
 	})
+}
+
+func TestBuildHeatmapQuerySpansMode(t *testing.T) {
+	// In spans mode the list below the chart shows spans, so the chart has to
+	// count spans too: counting distinct traces of root spans puts a number in
+	// the cell that the list can never match.
+	q := buildHeatmapQuery("status_code:2", 60, entitySpans)
+
+	assert.Contains(t, q, "count() if (")
+	assert.NotContains(t, q, "count_uniq(trace_id)")
+	// A span either failed or it did not; there is no trace to look inside.
+	assert.NotContains(t, q, "trace_id:in(")
+	// Root spans are the trace's duration, not the span's, so spans mode keeps
+	// every span.
+	assert.NotContains(t, q, rootSpanOnly)
+	assert.Contains(t, q, "| stats by (_time:60s)")
 }
 
 func TestParseHeatmap(t *testing.T) {

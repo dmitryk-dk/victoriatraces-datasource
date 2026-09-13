@@ -19,7 +19,28 @@ jest.mock('@grafana/runtime', () => ({
     getInstanceSettings: () => ({ jsonData: {} }),
   }),
   locationService: {
-    getSearch: () => new URLSearchParams(),
+    getSearch: () =>
+      new URLSearchParams({
+        schemaVersion: '1',
+        panes: JSON.stringify({
+          p1: {
+            datasource: 'ds',
+            queries: [
+              {
+                refId: 'A',
+                datasource: { uid: 'test-uid' },
+                queryType: 'traceList',
+                entity: 'traces',
+                where: '',
+                services: ['checkout'],
+                expr: '_time:5m',
+                customFields: ['http.route'],
+                traceFilters: [{ kind: 'operation', value: 'POST /order' }],
+              },
+            ],
+          },
+        }),
+      }),
     push: jest.fn(),
   },
 }));
@@ -469,5 +490,126 @@ describe('TracePanel and the charts panel', () => {
 
     expect(screen.queryByLabelText('Trace volume by duration')).not.toBeInTheDocument();
     expect(screen.queryByRole('radio', { name: 'Heatmap' })).not.toBeInTheDocument();
+  });
+});
+
+describe('TracePanel filter sidebar', () => {
+  function propsWithSelection() {
+    const props = makeProps();
+    (props.data as { request: { targets: unknown[] } }).request.targets = [
+      {
+        refId: 'A',
+        datasource: { uid: 'test-uid' },
+        queryType: 'traceList',
+        where: '',
+        services: ['checkout'],
+        traceFilters: [{ kind: 'operation', value: 'POST /order' }],
+      },
+    ];
+    return props;
+  }
+
+  beforeEach(() => {
+    mockFetch.mockImplementation(({ url }: { url: string }) => {
+      if (url.includes('facets')) {
+        return of({
+          data: [
+            {
+              field: 'resource_attr:service.name',
+              values: [
+                { value: 'checkout', count: 10 },
+                { value: 'frontend', count: 4 },
+              ],
+            },
+            { field: 'name', values: [{ value: 'POST /order', count: 10 }] },
+          ],
+        });
+      }
+      return of({ data: [] });
+    });
+  });
+
+  it('ticks the values the query is already filtered by', async () => {
+    // Otherwise the sidebar cannot say which filter is in force, and the only
+    // way to tell is to read the query.
+    render(<TracePanel {...propsWithSelection()} />);
+
+    const service = await screen.findByTitle('checkout');
+    expect(service.querySelector('input[type="checkbox"]')).toBeChecked();
+    const operation = await screen.findByTitle('POST /order');
+    expect(operation.querySelector('input[type="checkbox"]')).toBeChecked();
+  });
+
+  it('keeps the rest of the query when a facet is ticked', async () => {
+    // The sidebar reads its ticks back off the query, so an edit that drops
+    // fields loses the selection it just made.
+    const props = propsWithSelection();
+    (props.data as { request: { targets: any[] } }).request.targets[0].expr = '_time:5m';
+    (props.data as { request: { targets: any[] } }).request.targets[0].customFields = ['http.route'];
+    render(<TracePanel {...props} />);
+
+    const frontend = await screen.findByTitle('frontend');
+    fireEvent.click(frontend.querySelector('input[type="checkbox"]')!);
+
+    const { locationService } = jest.requireMock('@grafana/runtime');
+    const [{ search }] = locationService.push.mock.calls.at(-1);
+    const query = JSON.parse(new URLSearchParams(search).get('panes')!).p1.queries[0];
+    expect(query.services).toEqual(['checkout', 'frontend']);
+    expect(query.expr).toBe('_time:5m');
+    expect(query.customFields).toEqual(['http.route']);
+    expect(query.traceFilters).toEqual([{ kind: 'operation', value: 'POST /order' }]);
+  });
+
+  it('keeps the filters when a column is added', async () => {
+    // Adding a column is an edit, not a change of mode: it must not take the
+    // sidebar's selection down with it.
+    render(<TracePanel {...propsWithSelection()} />);
+    await screen.findByTitle('checkout');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add column' }));
+    const combo = screen.getByLabelText('Add column');
+    fireEvent.change(combo, { target: { value: 'http.route' } });
+    fireEvent.keyDown(combo, { key: 'Enter', code: 'Enter' });
+
+    const { locationService } = jest.requireMock('@grafana/runtime');
+    const [{ search }] = locationService.push.mock.calls.at(-1);
+    const query = JSON.parse(new URLSearchParams(search).get('panes')!).p1.queries[0];
+    // Stored under the storage name the backend aggregates by.
+    expect(query.customFields).toEqual(['span_attr:http.route']);
+    expect(query.services).toEqual(['checkout']);
+  });
+
+  it('ticks the selection when Explore gives the panel no request', async () => {
+    // Explore builds a custom panel's data as {series, state, timeRange}: there
+    // is no request, so the query has to be read off the frame instead.
+    const props = makeProps();
+    delete (props.data as { request?: unknown }).request;
+    (props.data as { series: any[] }).series = [
+      {
+        ...traceListFrame(),
+        meta: {
+          custom: {
+            datasourceUid: 'test-uid',
+            query: {
+              queryType: 'traceList',
+              services: ['checkout'],
+              traceFilters: [{ kind: 'operation', value: 'POST /order' }],
+            },
+          },
+        },
+      },
+    ];
+    render(<TracePanel {...props} />);
+
+    const service = await screen.findByTitle('checkout');
+    expect(service.querySelector('input[type="checkbox"]')).toBeChecked();
+    const operation = await screen.findByTitle('POST /order');
+    expect(operation.querySelector('input[type="checkbox"]')).toBeChecked();
+  });
+
+  it('offers to clear what is selected', async () => {
+    render(<TracePanel {...propsWithSelection()} />);
+
+    expect(await screen.findByLabelText('Clear 1 selected services')).toBeInTheDocument();
   });
 });

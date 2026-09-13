@@ -1,6 +1,6 @@
 import { isErrorSpan } from './spanTree';
 
-/** The parts of a span this filter reads. Ported from visum's spanFilter. */
+/** The parts of a span this filter reads. */
 export interface SpanFilterable {
   spanID: string;
   operationName: string;

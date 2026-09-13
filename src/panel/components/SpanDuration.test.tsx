@@ -86,7 +86,7 @@ describe('SpanDuration critical path overlay', () => {
 describe('SpanDuration bar width', () => {
   it('keeps a near-zero span visible', () => {
     // A span far shorter than the trace still needs a sliver wide enough to
-    // see and to hover, as visum's 0.5% floor gives it.
+    // see and to hover, which the 0.5% floor gives it.
     render(<SpanDuration span={span(0, 1)} minMs={0} maxMs={100_000} />);
 
     const bar = screen.getByTitle(/start \+/);

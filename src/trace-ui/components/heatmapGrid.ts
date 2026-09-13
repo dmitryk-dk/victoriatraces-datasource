@@ -8,7 +8,7 @@ import type { HeatmapCell } from '../api/traceList';
  * the same selection shape.
  */
 
-/** A time and duration window, as visum's HeatmapSelection. */
+/** A time and duration window. */
 export interface ChartSelection {
   startMicros: number;
   endMicros: number;

@@ -1,5 +1,5 @@
 // Jaeger-shaped trace model, as returned by the datasource `trace/<id>` resource.
-// Ported from visum's ui/src/model/traces.
+// The trace model the panel renders from.
 
 export type Field = StringField; // other types are not supported yet
 

@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/grafana/grafana-plugin-sdk-go/data"
@@ -278,4 +279,24 @@ func TestTraceChartsFrame(t *testing.T) {
 	// The panel finds its datasource through the frame, as the trace list does.
 	assert.Equal(t, "uid-1", frame.Meta.Custom.(map[string]interface{})["datasourceUid"])
 	assert.Equal(t, "trace_charts", frame.Name)
+}
+
+func TestFramesCarryTheExecutedQuery(t *testing.T) {
+	// Explore builds a custom panel's data as {series, state, timeRange} — it
+	// carries no request — so a panel can only learn what it is showing from
+	// the frame. Without this the sidebar cannot tick the filters in force and
+	// the charts query an empty filter.
+	raw := []byte(`{"queryType":"traceList","services":["checkout"]}`)
+
+	for _, frame := range []*data.Frame{
+		TraceChartsFrame("uid-1"),
+		TraceListRowsToFrame(nil, nil, "uid-1"),
+		SpanListRowsToFrame(nil, nil, "uid-1"),
+	} {
+		withQueryContext(frame, raw)
+		custom, ok := frame.Meta.Custom.(map[string]interface{})
+		require.True(t, ok, "frame %q lost its custom meta", frame.Name)
+		assert.Equal(t, "uid-1", custom["datasourceUid"], "frame %q", frame.Name)
+		assert.Equal(t, json.RawMessage(raw), custom["query"], "frame %q", frame.Name)
+	}
 }

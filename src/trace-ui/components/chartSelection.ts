@@ -3,7 +3,7 @@
  *
  * Pixel-space only: each chart converts the box into a time and duration
  * window itself, because their axes differ (banded duration bins against a
- * continuous log scale). Ported from visum's heatmap pointer handling.
+ * continuous log scale).
  */
 
 export interface PxRect {

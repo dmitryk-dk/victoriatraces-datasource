@@ -15,7 +15,7 @@ describe('formatDurationMs', () => {
   });
 
   it('uses minutes past a minute', () => {
-    // "125m 30s" is bulkier and loses precision next to visum's "2.09 min".
+    // "125m 30s" is bulkier and loses precision next to "2.09 min".
     expect(formatDurationMs(90_000)).toBe('1.50min');
   });
 

@@ -5,8 +5,9 @@ import { map, Observable, shareReplay, tap } from 'rxjs';
 // multi-valued parameter such as `field` or `customField`.
 export type ResourceParams = Record<string, string | number | string[] | undefined>;
 
-// visum got caching, in-flight dedup and cancellation from react-query. On the
-// RxJS path they have to be built, so they live here rather than in each hook.
+// Caching, in-flight dedup and cancellation come free with a query library;
+// on the RxJS path they have to be built, so they live here rather than being
+// repeated in each hook.
 //
 // Entries are shared observables: two components asking for the same resource
 // at the same time make one HTTP call, and a repeat ask inside the stale window
@@ -87,4 +88,15 @@ export function fetchResource<T>(uid: string, path: string, params?: ResourcePar
 /** Drops a cached entry so the next call refetches. Used by explicit refresh. */
 export function invalidateResources() {
   cache.clear();
+}
+
+/**
+ * Drops one cached entry.
+ *
+ * A trace still being ingested has to be asked again within the stale window,
+ * and clearing the whole cache to do it would throw away every other panel's
+ * work as well.
+ */
+export function invalidateResource(uid: string, path: string, params?: ResourceParams) {
+  cache.delete(resourceUrl(uid, path) + buildQuery(params));
 }

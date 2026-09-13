@@ -7,7 +7,7 @@ import { ChartView, TraceCharts } from '../trace-ui/components/TraceCharts';
 import type { ChartSelection } from '../trace-ui/components/heatmapGrid';
 import { TraceChartSelectionEvent } from '../trace-ui/events/chartSelection';
 import { drillDurationFilter } from '../trace-ui/filters/chartDrill';
-import { addFiltersToQuery, datasourceUidFromData } from '../trace-ui/query/exploreQuery';
+import { addFiltersToQuery, datasourceUidFromData, queryFromData } from '../trace-ui/query/exploreQuery';
 import type { VictoriaTracesQuery } from '../types';
 
 const CHARTS_FRAME_NAME = 'trace_charts';
@@ -33,7 +33,7 @@ export function TraceChartsPanel({ data, eventBus, onChangeTimeRange }: PanelPro
   const [selection, setSelection] = useState<ChartSelection | null>(null);
 
   const dsUid = datasourceUidFromData(data);
-  const target = data.request?.targets?.[0] as VictoriaTracesQuery | undefined;
+  const target = queryFromData<VictoriaTracesQuery>(data);
   const hasFrame = data.series.some((f) => f.name === CHARTS_FRAME_NAME);
 
   const publishSelection = useCallback(
@@ -67,6 +67,7 @@ export function TraceChartsPanel({ data, eventBus, onChangeTimeRange }: PanelPro
   );
 
   const where = useMemo(() => target?.where ?? '', [target]);
+  const entity = target?.entity === 'spans' ? 'spans' : 'traces';
 
   if (!hasFrame) {
     return <div className={styles.empty}>Run a trace search to see its charts.</div>;
@@ -79,6 +80,7 @@ export function TraceChartsPanel({ data, eventBus, onChangeTimeRange }: PanelPro
         view={view}
         onViewChange={setView}
         where={where}
+        entity={entity}
         timeRange={data.timeRange}
         rows={[]}
         onDrillOperation={drillOperation}

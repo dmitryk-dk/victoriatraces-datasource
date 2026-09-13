@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { ServiceDependency, Trace, TraceSummary } from '../types/trace';
 import type { FieldName } from '../filters/tagKeys';
-import { fetchResource } from './resource';
+import { fetchResource, invalidateResource } from './resource';
 import { ResourceState, useResource } from './useResource';
 
 export const DEFAULT_SEARCH_LIMIT = 50;
@@ -80,15 +80,59 @@ export function traceLookupWindow(startTime: string | undefined): TraceWindow {
   };
 }
 
+/** How long to wait before asking again for a trace that has no root yet. */
+const TRACE_RETRY_MS = 1_500;
+
+/**
+ * How many times to ask.
+ *
+ * A trace still being ingested completes within a few seconds. One whose root
+ * simply sits outside the window being searched never will, and retrying for
+ * as long as the tab is open costs more than the trace is worth.
+ */
+const TRACE_RETRY_LIMIT = 10;
+
+/**
+ * True when the trace holds a span whose parent is not part of it — the span
+ * the waterfall hangs from.
+ */
+function hasRootSpan(trace: Trace | undefined): boolean {
+  if (!trace?.spans?.length) {
+    return false;
+  }
+  const ids = new Set(trace.spans.map((s) => s.spanID));
+  return trace.spans.some((span) => (span.references ?? []).every((ref) => !ids.has(ref.spanID)));
+}
+
 export function useTrace(
   uid: string | undefined,
   traceId: string | undefined,
   window: TraceWindow
 ): ResourceState<Trace> {
   const params = useMemo(() => ({ start: window.start, end: window.end }), [window.start, window.end]);
-  return useResource<Trace>(uid, `trace/${encodeURIComponent(traceId ?? '')}`, params, {
+  const path = `trace/${encodeURIComponent(traceId ?? '')}`;
+  // A trace can be read while its spans are still arriving, and one that has
+  // no root yet cannot be drawn. Asking again is what fills it in.
+  // trace view does.
+  const [reloadToken, setReloadToken] = useState(0);
+  const state = useResource<Trace>(uid, path, params, {
     enabled: Boolean(traceId),
+    reloadToken,
   });
+
+  const incomplete = Boolean(state.data) && !hasRootSpan(state.data);
+  useEffect(() => {
+    if (!uid || !incomplete || reloadToken >= TRACE_RETRY_LIMIT) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      invalidateResource(uid, path, params);
+      setReloadToken((token) => token + 1);
+    }, TRACE_RETRY_MS);
+    return () => clearTimeout(timer);
+  }, [uid, path, params, incomplete, reloadToken]);
+
+  return state;
 }
 
 export function useDependencies(
@@ -122,7 +166,7 @@ export interface TraceSearchResult {
 }
 
 /**
- * Cursor-paged trace search, mirroring visum's infinite list.
+ * Cursor-paged trace search, backing an infinite list.
  *
  * The cursor is the `end` bound, walked backwards: the next page ends one
  * second before the oldest trace already seen. Unlike an offset it cannot skip

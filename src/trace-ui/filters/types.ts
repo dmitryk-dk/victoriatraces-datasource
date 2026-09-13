@@ -20,7 +20,7 @@ export { FILTER_OPERATORS, operatorMeta } from './fieldFilter';
 export type TraceFilter =
   | { readonly kind: 'operation'; readonly value: string }
   | { readonly kind: 'tag'; readonly key: string; readonly value: string }
-  // A free-form comparison, mirroring visum's filter pipe: a field/operator/
+  // A free-form comparison: a field/operator/
   // value triple, a hand-written expression, or "everything".
   | {
       readonly kind: 'field';

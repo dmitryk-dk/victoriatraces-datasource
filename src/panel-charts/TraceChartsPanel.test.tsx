@@ -133,6 +133,51 @@ describe('TraceChartsPanel', () => {
     });
   });
 
+  it('charts the filter in force when Explore gives it no request', async () => {
+    // With no request the panel used to chart an empty filter, so the heatmap
+    // showed every trace while the list showed the filtered ones.
+    const props = makeProps();
+    delete (props.data as { request?: unknown }).request;
+    (props.data as { series: any[] }).series = [
+      {
+        ...chartsFrame(),
+        meta: {
+          custom: {
+            datasourceUid: 'test-uid',
+            query: { queryType: 'traceList', where: 'service.name:="frontend-proxy"' },
+          },
+        },
+      },
+    ];
+
+    render(<TraceChartsPanel {...props} />);
+
+    await waitFor(() => {
+      const req = mockFetch.mock.calls
+        .map(([r]: [{ url: string }]) => r)
+        .find((r: { url: string }) => r.url.includes('heatmap'));
+      expect(req?.url).toContain(encodeURIComponent('service.name:="frontend-proxy"'));
+    });
+  });
+
+  it('counts spans, not traces, when the list below shows spans', async () => {
+    // The chart and the list have to agree: counting distinct traces of root
+    // spans gives a cell a number the span list can never match.
+    const props = makeProps();
+    (props.data as { request: { targets: any[] } }).request.targets = [
+      { refId: 'A', datasource: { uid: 'test-uid' }, queryType: 'spanList', entity: 'spans', where: '' },
+    ];
+
+    render(<TraceChartsPanel {...props} />);
+
+    await waitFor(() => {
+      const req = mockFetch.mock.calls
+        .map(([r]: [{ url: string }]) => r)
+        .find((r: { url: string }) => r.url.includes('heatmap'));
+      expect(req?.url).toContain('entity=spans');
+    });
+  });
+
   it('says so when the query has not run yet', () => {
     const props = makeProps();
     (props.data as { series: unknown[] }).series = [];

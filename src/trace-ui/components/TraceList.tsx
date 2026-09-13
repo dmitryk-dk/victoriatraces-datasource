@@ -153,7 +153,7 @@ export function TraceList({
   const visible = useMemo(() => new Set(columns.map((c) => c.key)), [columns]);
 
   if (rows.length === 0) {
-    // Four distinct outcomes, as visum: a failure, a page still loading, a
+    // Four distinct outcomes: a failure, a page still loading, a
     // range that holds nothing, and a search that matched nothing. Saying
     // "no match" for an empty range sends the user hunting a filter they
     // never set.

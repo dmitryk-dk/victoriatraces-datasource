@@ -10,7 +10,7 @@ import {
   TraceFilterKind,
 } from '../filters/types';
 
-// Order follows visum: the filters reached for most often come first, and span
+// The filters reached for most often come first, and span
 // type sits apart because it picks a preset rather than opening a form.
 const KIND_ORDER: TraceFilterKind[] = ['field', 'tag', 'operation', 'duration', 'spans', 'error', 'limit'];
 

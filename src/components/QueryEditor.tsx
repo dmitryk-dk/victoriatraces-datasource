@@ -23,6 +23,7 @@ import {
 import { DataSource, isTailableExpr } from '../datasource';
 import { notifyError } from '../notify';
 import { defaultQuery, QueryType, VictoriaTracesOptions, VictoriaTracesQuery } from '../types';
+import { createLogsqlFetchers } from '../lang/logsql/fetchers';
 import { MonacoQueryFieldWrapper } from './monaco-query-field/MonacoQueryFieldWrapper';
 import { useDefaultExploreGraph, EXPLORE_GRAPH_STYLES } from './hooks/useDefaultExploreGraph';
 import { useLogsSort } from './hooks/useLogsSort';
@@ -199,6 +200,17 @@ export function QueryEditor({ datasource, query, onChange, onRunQuery, data, app
         : q.queryType;
 
   const collapsedInfo = useMemo(() => getCollapsedInfo(q), [q]);
+
+  // Field and value suggestions for the LogsQL editor, scoped to the range
+  // being queried — unscoped they are far too slow to answer a keystroke.
+  const logsqlFetchers = useMemo(
+    () =>
+      createLogsqlFetchers(datasource.uid, {
+        start: range?.from.toISOString(),
+        end: range?.to.toISOString(),
+      }),
+    [datasource.uid, range]
+  );
 
   const isValidStep = useMemo(
     () => !q.step || isValidGrafanaDuration(q.step) || !isNaN(+q.step),
@@ -390,6 +402,7 @@ export function QueryEditor({ datasource, query, onChange, onRunQuery, data, app
             history={[]}
             onChange={onExprChange}
             onRunQuery={onRunQuery}
+            fetchers={logsqlFetchers}
             initialValue={q.expr ?? ''}
             placeholder='Enter a LogsQL expression, e.g.  * | stats by ("resource_attr:service.name") count() requests'
             runQueryOnBlur
@@ -467,7 +480,7 @@ export function QueryEditor({ datasource, query, onChange, onRunQuery, data, app
         </>
       )}
 
-      {/* ── Traces mode: visum-style filter bar ── */}
+      {/* ── Traces mode: filter bar ── */}
       {(q.queryType === 'traceList' || q.queryType === 'spanList') && (
         <div className={styles.row}>
           <RadioButtonGroup

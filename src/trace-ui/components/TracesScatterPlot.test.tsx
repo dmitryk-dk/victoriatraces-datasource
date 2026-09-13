@@ -58,7 +58,7 @@ describe('TracesScatterPlot', () => {
   });
 
   it('sizes each dot by its span count', () => {
-    // visum reads bubble size as span count; a fixed dot loses that.
+    // Bubble size reads as span count; a fixed dot loses that.
     render(
       <TracesScatterPlot rows={[row('a', 0, 1000, 1), row('b', 10, 2000, 100)]} startMs={START_MS} endMs={END_MS} />
     );
@@ -146,7 +146,7 @@ function axisPos(el: HTMLElement): number {
 describe('TracesScatterPlot axes', () => {
   it('labels the duration axis at round values, not just the extremes', () => {
     // Two labels (the fastest and slowest trace loaded) give no scale to read
-    // a dot against; visum's log axis ticks round durations.
+    // a dot against; a log axis ticks round durations.
     renderPlot({ rows: [row('a', 0, 1_000), row('b', 90_000, 1_000_000)] });
     const ticks = [...document.querySelectorAll<HTMLElement>('[data-testid="duration-tick"]')];
 

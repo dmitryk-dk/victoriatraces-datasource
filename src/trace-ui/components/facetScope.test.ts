@@ -15,8 +15,8 @@ describe('scopeFacetValues', () => {
   });
 
   it('keeps the unscoped count, so a value never appears to shrink', () => {
-    // Counts that drop as you select make the sidebar unreadable; visum shows
-    // the universe count and dims what would not combine.
+    // Counts that drop as you select make the sidebar unreadable, so the
+    // count stays the unscoped one and what would not combine is dimmed.
     const [frontend] = scopeFacetValues([v('frontend', 100)], [v('frontend', 3)]);
     expect(frontend.count).toBe(100);
   });

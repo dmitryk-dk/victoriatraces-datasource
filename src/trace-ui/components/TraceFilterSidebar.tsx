@@ -295,7 +295,7 @@ interface TagSectionProps {
 }
 
 /**
- * Tag filters, editable here as well as in the query editor — visum keeps them
+ * Tag filters, editable here as well as in the query editor — they are kept
  * in the sidebar, and a panel viewed on a dashboard has no query editor.
  */
 function TagSection({ tags, tagKeys, onAdd, onRemove }: TagSectionProps) {

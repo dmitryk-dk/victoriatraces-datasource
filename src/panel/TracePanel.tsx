@@ -42,7 +42,9 @@ import { TraceChartSelectionEvent } from '../trace-ui/events/chartSelection';
 import { buildTraceListQuery } from '../trace-ui/filters/logsql';
 import {
   datasourceUidFromData,
+  queryFromData,
   navigateExplore,
+  patchTarget,
   rebuildTarget,
 } from '../trace-ui/query/exploreQuery';
 import type { TraceFilter } from '../trace-ui/filters/types';
@@ -225,12 +227,12 @@ export function TracePanel({ data, width, height, eventBus, onChangeTimeRange }:
     };
   }, [dsUid]);
 
-  const traceTarget = data.request?.targets?.[0] as VictoriaTracesQuery | undefined;
+  const traceTarget = queryFromData<VictoriaTracesQuery>(data);
   const customFields = useMemo(() => traceTarget?.customFields ?? [], [traceTarget]);
   // Custom columns change what the backend aggregates, so they live in the
   // query rather than in panel state.
   const setCustomFields = useCallback((fields: string[]) => {
-    navigateExplore((q) => rebuildTarget(q, { customFields: fields }));
+    navigateExplore((q) => patchTarget(q, { customFields: fields }));
   }, []);
 
   const metaRange = useMemo(
@@ -314,7 +316,9 @@ export function TracePanel({ data, width, height, eventBus, onChangeTimeRange }:
           rawQuery: q.expr ?? '',
           entity: nextEntity,
         });
-        return rebuildTarget(q, {
+        // Patched, not rebuilt: an edit here stays in the same mode, and the
+        // sidebar reads its ticks back off the fields a rebuild would drop.
+        return patchTarget(q, {
           queryType: nextEntity === 'spans' ? 'spanList' : 'traceList',
           entity: nextEntity,
           services,

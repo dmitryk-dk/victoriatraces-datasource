@@ -29,7 +29,7 @@ interface Props {
 
 /**
  * A filter as an editable pill: the body reopens the form to change values, the
- * trailing × removes it. Mirrors visum's badge, which is where filters are
+ * trailing × removes it. The badge is where filters are
  * edited rather than in a separate panel.
  */
 export function TraceFilterBadge({

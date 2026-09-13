@@ -7,7 +7,7 @@ export interface ScopedFacetValue extends FacetValue {
 
 /**
  * Marks which values would still return traces under the filters already set
- * elsewhere, as visum's sidebar does.
+ * elsewhere.
  *
  * The count shown stays the unscoped one. Counts that shrink as you select
  * turn the sidebar into a dead end — a value drops to zero and disappears

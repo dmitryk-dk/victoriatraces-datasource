@@ -13,7 +13,7 @@ import (
 
 // The trace list is a LogsQL aggregation rather than a Tempo search: the Tempo
 // summary carries five fields, and the list needs span counts, error counts and
-// the full service set per trace. Ported from visum's useSearchTraceList.
+// the full service set per trace.
 
 // TraceListRow is one row of the trace list.
 type TraceListRow struct {
@@ -119,7 +119,7 @@ func writeTraceAggregation(b *strings.Builder, customFields []string, matchCond 
 // Ordered by trace id, not by time: a time-ordered limit returns only the
 // newest N, which against a busy source is a few seconds' worth and puts every
 // point on the right-hand edge of the plot. Trace ids are effectively random,
-// so the same limit spreads across the whole range. visum samples the same way.
+// so the same limit spreads across the whole range.
 func buildTraceSampleQuery(where string, limit int) string {
 	if where == "" {
 		where = defaultTraceListWhere
@@ -169,7 +169,7 @@ func parseTraceCount(body io.Reader) (int64, error) {
 
 const defaultTraceListLimit = 50
 
-// defaultScatterLimit matches visum's DEFAULT_SCATTER_LIMIT.
+// defaultScatterLimit caps the scatter plot's sample.
 const defaultScatterLimit = 1000
 
 // firstJSONValue reads the first entry of a LogsQL `values(...)` result, which

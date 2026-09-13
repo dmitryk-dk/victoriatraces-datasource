@@ -365,7 +365,7 @@ export function TraceSpanTree({ trace, selectedSpanId, onSelectSpan }: TraceSpan
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // A large trace holds thousands of rows; mounting them all makes scrolling
-  // unusable, which is why visum virtualizes this list too.
+  // unusable, which is why this list is virtualized.
   const virtualizer = useVirtualizer({
     count: flatNodes.length,
     getScrollElement: () => scrollRef.current,

@@ -191,7 +191,7 @@ describe('TracesHeatmap', () => {
 
 describe('TracesHeatmap duration axis', () => {
   // Sixteen bands means sixteen labels stacked in ~120px, which is a wall of
-  // text nobody reads. visum labels five positions and lets the bands speak.
+  // text nobody reads. Five labelled positions let the bands speak instead.
   const manyBands = () =>
     data({
       yEdgesNs: Array.from({ length: 15 }, (_, i) => 1_000 * 10 ** (i / 2)),
