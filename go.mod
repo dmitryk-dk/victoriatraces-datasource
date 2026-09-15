@@ -6,7 +6,7 @@ require (
 	github.com/grafana/grafana-plugin-sdk-go v0.292.1
 	github.com/magefile/mage v1.17.2
 	github.com/stretchr/testify v1.12.1
-	github.com/valyala/fastjson v1.6.4
+	github.com/valyala/fastjson v1.6.10
 )
 
 require (
