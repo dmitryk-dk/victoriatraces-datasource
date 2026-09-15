@@ -23,9 +23,6 @@ VictoriaLogs playgrounds:
 - Logs: <https://play-vmlogs.victoriametrics.com/>
 
 ![VictoriaTraces in Grafana Explore - hero shot](https://github.com/dmitryk-dk/victoriatraces-datasource/blob/main/docs/screenshots/hero-explore.png?raw=true)
-<!-- Hero screenshot: Explore page with the VictoriaTraces datasource selected, showing a
-     search result list or the waterfall view of a single trace. Aim for ~1600px wide,
-     dark theme. Captures the overall look at a glance. -->
 
 * [Features](#features)
 * [Requirements](#requirements)
@@ -34,9 +31,10 @@ VictoriaLogs playgrounds:
   * [Manual install](#manual-install)
   * [Docker Compose](#docker-compose)
   * [Kubernetes](#kubernetes)
+  * [Tarball install](#tarball-install-any-environment)
 * [Grafana provisioning](#grafana-provisioning)
 * [Usage](#usage)
-* [Trace to Logs and to Metrics correlations](#trace--logs-and--metrics-correlations)
+* [Trace to Logs and to Metrics correlations](#trace-to-logs-and-to-metrics-correlations)
 * [Development](#development)
 * [Notes](#notes)
 * [License](#license)
@@ -47,13 +45,21 @@ VictoriaLogs playgrounds:
 
 ## Features
 
+- Trace list with a filter bar: pick services, add operation / tag / field / duration / span-count
+  filters, or write the LogsQL yourself. A facet sidebar shows each value with the number of
+  traces carrying it.
+- Traces or spans: the same filters either aggregate per trace or list matching spans directly.
+- Charts over the current search: duration heatmap, duration-vs-time scatter, per-operation
+  statistics, and a service map. Dragging a selection on a chart narrows the list below it.
 - Search traces by service, operation, tags, and time range (Jaeger-compatible API).
 - Fetch a single trace by ID with a full waterfall span tree.
-- Custom trace panel: service-coloured bars, error highlighting, span detail side panel.
+- Custom trace panel: service-coloured bars, error highlighting, critical-path marking,
+  span detail side panel.
 - Custom node-graph panel: dagre-layout dependency graph with call-volume heat, click a service to filter Explore.
-- LogsQL stats queries (`stats_query_range`, `stats_query`, `hits`) for time-series and stat panels.
+- LogsQL stats queries (`stats_query_range`, `stats_query`, `hits`) for time-series and stat panels,
+  plus raw logs and live tail in Explore.
 - Trace-to-logs and trace-to-metrics correlations (configurable).
-- Template variable support for service / operation / field names / field values.
+- Template variables for field names and field values, each optionally scoped by a LogsQL filter.
 - Auth: Basic, Bearer, custom headers, TLS client cert + custom CA, mTLS, HTTP proxy.
   All wired through Grafana's standard `DataSourceHttpSettings`.
 
@@ -123,8 +129,15 @@ docker run -d \
   victoriametrics/victoria-traces:latest \
   --storageDataPath=/storage \
   --retentionPeriod=7d \
-  --otlpGRPCListenAddr=:4317
+  --otlpGRPCListenAddr=:4317 \
+  --otlpGRPC.tls=false
 ```
+
+From v0.8.2 VictoriaTraces defaults `-otlpGRPC.tls` to `true`, and then refuses to start without
+a key file (`-otlpGRPC.tlsKeyFile is required when -otlpGRPC.tls is true`). Passing
+`--otlpGRPC.tls=false` keeps gRPC ingestion plaintext, which is what you want on a local box;
+for anything exposed, set `-otlpGRPC.tlsCertFile` and `-otlpGRPC.tlsKeyFile` instead. Drop the
+flag entirely if you are not enabling gRPC.
 
 Useful flags:
 
@@ -132,6 +145,7 @@ Useful flags:
 |------|---------|--------------|
 | `-httpListenAddr` | `:10428` | HTTP API. Serves both the Jaeger query API (used by the plugin) and OTLP HTTP ingestion at `/insert/opentelemetry/v1/traces` |
 | `-otlpGRPCListenAddr` | _disabled_ | OTLP gRPC ingestion. Usually `:4317` |
+| `-otlpGRPC.tls` | `true` (v0.8.2+) | TLS for the gRPC listener. `false` for plaintext, or supply `-otlpGRPC.tlsCertFile` / `-otlpGRPC.tlsKeyFile` |
 | `-storageDataPath` | `victoria-traces-data` | Where traces live on disk |
 | `-retentionPeriod` | `7d` | How long traces are kept |
 
@@ -361,41 +375,30 @@ starting point if you don't want to design one from scratch.
 1. Add a **VictoriaTraces** datasource and point it at your VT instance.
 
    ![Datasource configuration page](https://github.com/dmitryk-dk/victoriatraces-datasource/blob/main/docs/screenshots/config-editor.png?raw=true)
-   <!-- Datasource ConfigEditor: the form filled out with URL pointing at a VT instance,
-        Node Graph toggle visible, Trace-to-Logs + Trace-to-Metrics panels expanded showing
-        the linked VictoriaMetrics/VictoriaLogs datasources. Light or dark theme - pick one
-        and use the same theme for all screenshots. -->
 
 2. In **Explore**, pick a query type:
+   - **Traces** - the default. A filter bar over a trace list, with the charts above it and a
+     facet sidebar beside it. The Traces / Spans toggle switches what a row stands for; clicking
+     a row opens a preview, and from there the full trace view.
+
    - **Search** - by service / operation / tags / time range.
 
      ![Search query mode in Explore](https://github.com/dmitryk-dk/victoriatraces-datasource/blob/main/docs/screenshots/query-editor-search.png?raw=true)
-     <!-- QueryEditor in Search mode: Service select with a value picked, Operation select
-          populated, one or two tag pills visible (e.g - http.status_code=500), Limit set.
-          Show the dropdowns open if possible to make the autocomplete obvious. -->
 
-   - **Trace ID** - for a known trace, jump straight to the waterfall.
+   - **Trace ID** - for a known trace, jump straight to the waterfall. Shown below in a
+     dashboard panel, where the tree has room; Explore fixes a custom panel at 400px, which
+     is a few rows of a large trace.
 
      ![Waterfall span tree for a single trace](https://github.com/dmitryk-dk/victoriatraces-datasource/blob/main/docs/screenshots/waterfall.png?raw=true)
-     <!-- Trace detail view: the full waterfall, several services represented with
-          different colours, at least one error span visible (red outline + ! badge),
-          ideally with the span-detail side panel open showing tags/logs/links. -->
 
    - **LogsQL** - for `stats_query_range`, `stats_query`, raw logs, or `hits` queries.
 
      ![LogsQL query mode with Monaco editor and time series](https://github.com/dmitryk-dk/victoriatraces-datasource/blob/main/docs/screenshots/query-editor-logsql.png?raw=true)
-     <!-- QueryEditor in LogsQL mode: Monaco editor with a non-trivial expression
-          (e.g. `* | stats by ("resource_attr:service.name") count() requests`), the Type
-          radio (Raw Logs / Range / Instant) visible in the collapsible Options group,
-          and the panel below rendering the result. -->
 
 3. In a dashboard, drop the **VictoriaTraces panel** for the waterfall view, or the
    **VictoriaTraces node graph** panel for service dependencies.
 
    ![Service dependency graph panel](https://github.com/dmitryk-dk/victoriatraces-datasource/blob/main/docs/screenshots/node-graph.png?raw=true)
-   <!-- DependencyGraph panel: at least 4-5 services laid out vertically (dagre TB),
-        coloured edges with call counts, ideally one node clicked so the highlight +
-        dim state is visible. The Calls low to high legend should be in shot. -->
 
 ### Sending traces in
 
@@ -429,6 +432,10 @@ Two variable types:
 
 - **Field names** - every field name available, optionally narrowed by a LogsQL filter.
 - **Field values** - values for a chosen field, with a configurable limit.
+
+There is no dedicated service or operation variable: both are ordinary fields, so a **Field
+values** variable over `resource_attr:service.name` (or `name` for operations) is how you build
+one.
 
 ## Trace to Logs and to Metrics correlations
 
@@ -682,9 +689,12 @@ The bundled panel plugins (`victoriametrics-traces-panel`,
 with the datasource in the same release archive. They share styling and a few utilities, and they expect the datasource to
 emit specific data-frame shapes - using them with another datasource won't do anything useful.
 
-If you hit a 404 from `GET /select/jaeger/api/traces/<id>` that's the upstream telling you the
-trace either expired (retention) or never made it in. The plugin surfaces that as a clean
-"trace not found" message rather than the raw Jaeger JSON.
+Trace lookup does not go through the Jaeger API. A trace is read with LogsQL, from
+`/select/logsql/query`, because that returns the spans as stored: attributes, events and scope
+survive unchanged, and a trace still being ingested comes back partial rather than as an error.
+The Jaeger API is used for the service and operation pickers, for Search-mode queries, and for
+the dependency graph. When a lookup finds no spans — the trace expired under retention, or never
+arrived — the plugin reports a clean "trace not found" rather than an empty waterfall.
 
 For more on `plugin.json` fields, see the
 [Grafana plugin reference](https://grafana.com/developers/plugin-tools/reference-plugin-json#properties).
