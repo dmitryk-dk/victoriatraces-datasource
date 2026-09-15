@@ -1,0 +1,35 @@
+version: 2
+
+updates:
+  # Go modules. NOTE: this repo vendors its dependencies, and Dependabot does
+  # not run `go mod vendor`, so its PRs land with vendor/ out of sync and the
+  # build fails until someone re-vendors. Either re-vendor on the branch before
+  # merging, or drop vendor/ and rely on the module proxy.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(go)"
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(npm)"
+    groups:
+      # @grafana/* move together; separate PRs for them just conflict.
+      grafana:
+        patterns: ["@grafana/*"]
+
+  # Keeps the SHA-pinned actions current — pinning without updates is just
+  # a slower kind of stale.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "deps(actions)"
