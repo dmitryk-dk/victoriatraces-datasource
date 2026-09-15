@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/grafana/grafana-plugin-sdk-go/data"
@@ -264,4 +265,86 @@ func TestTraceToNodeGraphFrames(t *testing.T) {
 			tc.check(t, nodes, edges)
 		})
 	}
+}
+
+func TestTraceChartsFrame(t *testing.T) {
+	// Explore groups custom frames by their panel id, so the charts need a
+	// frame of their own to be rendered in a second panel; without one they
+	// would share the trace list's 400px box.
+	frame := TraceChartsFrame("uid-1")
+
+	require.NotNil(t, frame.Meta)
+	assert.Equal(t, "victoriametrics-traces-charts-panel", frame.Meta.PreferredVisualizationPluginID)
+	assert.Equal(t, "trace", string(frame.Meta.PreferredVisualization))
+	// The panel finds its datasource through the frame, as the trace list does.
+	assert.Equal(t, "uid-1", frame.Meta.Custom.(map[string]interface{})["datasourceUid"])
+	assert.Equal(t, "trace_charts", frame.Name)
+}
+
+func TestFramesCarryTheExecutedQuery(t *testing.T) {
+	// Explore builds a custom panel's data as {series, state, timeRange} — it
+	// carries no request — so a panel can only learn what it is showing from
+	// the frame. Without this the sidebar cannot tick the filters in force and
+	// the charts query an empty filter.
+	raw := []byte(`{"queryType":"traceList","services":["checkout"]}`)
+
+	for _, frame := range []*data.Frame{
+		TraceChartsFrame("uid-1"),
+		TraceListRowsToFrame(nil, nil, "uid-1"),
+		SpanListRowsToFrame(nil, nil, "uid-1"),
+	} {
+		withQueryContext(frame, raw)
+		custom, ok := frame.Meta.Custom.(map[string]interface{})
+		require.True(t, ok, "frame %q lost its custom meta", frame.Name)
+		assert.Equal(t, "uid-1", custom["datasourceUid"], "frame %q", frame.Name)
+		assert.Equal(t, json.RawMessage(raw), custom["query"], "frame %q", frame.Name)
+	}
+}
+
+// A span stored by VictoriaTraces carries its failure as otel.status_code=2,
+// not as the `error` tag the Jaeger API synthesises. Both spellings reach
+// these frames — trace-by-ID rebuilds spans from LogsQL — so both have to
+// count, or a failing trace draws an all-green node graph.
+func TestSpanHasErrorOtelStatusCode(t *testing.T) {
+	span := JaegerSpan{
+		SpanID: "span1",
+		Tags: []JaegerKeyValue{
+			{Key: "otel.status_code", Type: "string", Value: "2"},
+		},
+	}
+
+	assert.True(t, spanHasError(span))
+}
+
+func TestSpanHasErrorOtelStatusCodeOk(t *testing.T) {
+	span := JaegerSpan{
+		SpanID: "span1",
+		Tags: []JaegerKeyValue{
+			{Key: "otel.status_code", Type: "string", Value: "1"},
+		},
+	}
+
+	assert.False(t, spanHasError(span))
+}
+
+func TestTraceToNodeGraphFramesCountsOtelErrors(t *testing.T) {
+	trace := JaegerTrace{
+		TraceID:   "abc123",
+		Processes: map[string]JaegerProcess{"frontend": {ServiceName: "frontend"}},
+		Spans: []JaegerSpan{{
+			TraceID:    "abc123",
+			SpanID:     "span1",
+			ProcessID:  "frontend",
+			References: []JaegerReference{},
+			Tags: []JaegerKeyValue{
+				{Key: "otel.status_code", Type: "string", Value: "2"},
+			},
+		}},
+	}
+
+	nodes, _ := TraceToNodeGraphFrames([]JaegerTrace{trace})
+
+	errField, _ := nodes.FieldByName("arc__errors")
+	require.NotNil(t, errField)
+	assert.Equal(t, float64(1), errField.At(0).(float64))
 }

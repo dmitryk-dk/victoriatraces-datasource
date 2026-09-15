@@ -3,7 +3,7 @@
     "jsx": "react",
     "target": "ES2022",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "outDir": "plugins/victoriatraces-datasource",
+    "outDir": "plugins/victoriametrics-traces-datasource",
     "allowJs": true,
     "strict": true,
     "resolveJsonModule": true,
@@ -11,5 +11,16 @@
     "incremental": true,
     "tsBuildInfoFile": "./tsconfig.tsbuildinfo"
   },
-  "extends": "./.config/tsconfig.json"
+  "extends": "./.config/tsconfig.json",
+  "include": ["src/**/*"],
+  "exclude": [
+    "node_modules",
+    ".docker-node_modules",
+    "plugins",
+    "release",
+    "dist",
+    "coverage",
+    ".config/**",
+    "webpack.config.ts"
+  ]
 }

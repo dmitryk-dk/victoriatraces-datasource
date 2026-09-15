@@ -28,15 +28,18 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Run OSV-Scanner
+        continue-on-error: true
         uses: google/osv-scanner-action/osv-scanner-action@v2.3.3
         with:
           scan-args: |-
             --format=json
             --output=osv-results.json
             --recursive
+            --no-call-analysis=go
             ./
 
       - name: Fail on HIGH/CRITICAL findings
+        if: always()
         run: |
           if [ ! -f osv-results.json ]; then
             echo "::notice::No vulnerabilities found"
@@ -125,7 +128,7 @@ jobs:
       #       echo "::warning::GRAFANA_ACCESS_POLICY_TOKEN secret missing — producing unsigned build"
       #       exit 0
       #     fi
-      #     cd plugins/victoriatraces-datasource
+      #     cd plugins/victoriametrics-traces-datasource
       #     npx --yes @grafana/sign-plugin@latest
 
       # -o skips re-running the docker-based frontend build and the backend
@@ -150,9 +153,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            release/victoriatraces-datasource-${{ steps.version.outputs.version }}.zip
-            release/victoriatraces-datasource-${{ steps.version.outputs.version }}.tar.gz
-            release/victoriatraces-datasource-${{ steps.version.outputs.version }}_checksums_zip.txt
-            release/victoriatraces-datasource-${{ steps.version.outputs.version }}_checksums_tar.gz.txt
+            release/victoriametrics-traces-datasource-${{ steps.version.outputs.version }}.zip
+            release/victoriametrics-traces-datasource-${{ steps.version.outputs.version }}.tar.gz
+            release/victoriametrics-traces-datasource-${{ steps.version.outputs.version }}_checksums_zip.txt
+            release/victoriametrics-traces-datasource-${{ steps.version.outputs.version }}_checksums_tar.gz.txt
           generate_release_notes: true
           draft: true

@@ -3,10 +3,6 @@ plugins/
 release/
 bin/
 
-# Go
-go.sum
-vendor/
-
 # Node
 node_modules/
 npm-debug.log*
@@ -14,9 +10,20 @@ npm-debug.log*
 # TypeScript
 tsconfig.tsbuildinfo
 
+# Lint cache
+.eslintcache
+
+# Playwright
+/playwright/.auth/
+/playwright-report/
+/test-results/
+
 # Docker build caches
 .cache/
 .npm/
+# Container-side node_modules, kept off the host's so a Linux install
+# cannot overwrite the macOS one and break local tooling.
+.docker-node_modules/
 
 # Docker volumes
 victoriatraces-data/

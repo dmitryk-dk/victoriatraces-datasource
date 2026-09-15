@@ -1,7 +1,7 @@
 {
   "type": "panel",
   "name": "Node graph",
-  "id": "victoriatraces-panel-graph",
+  "id": "victoriametrics-traces-nodegraph-panel",
   "info": {
     "version": "1.0.0",
     "description": "Service dependency graph panel for VictoriaTraces",
@@ -11,10 +11,40 @@
     "logos": {
       "small": "img/logo.svg",
       "large": "img/logo.svg"
-    }
+    },
+    "keywords": [
+      "victoriatraces",
+      "victoriametrics",
+      "tracing",
+      "traces",
+      "service map",
+      "node graph"
+    ],
+    "links": [
+      {
+        "name": "GitHub",
+        "url": "https://github.com/dmitryk-dk/victoriatraces-datasource"
+      },
+      {
+        "name": "Issues",
+        "url": "https://github.com/dmitryk-dk/victoriatraces-datasource/issues"
+      },
+      {
+        "name": "License",
+        "url": "https://github.com/dmitryk-dk/victoriatraces-datasource/blob/main/LICENSE"
+      },
+      {
+        "name": "Changelog",
+        "url": "https://github.com/dmitryk-dk/victoriatraces-datasource/blob/main/CHANGELOG.md"
+      },
+      {
+        "name": "VictoriaTraces",
+        "url": "https://docs.victoriametrics.com/victoriatraces/"
+      }
+    ],
+    "updated": "2026-06-06"
   },
   "dependencies": {
-    "grafanaDependency": ">=10.0.0"
+    "grafanaDependency": ">=12.3.0"
   }
 }
-

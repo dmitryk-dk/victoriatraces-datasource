@@ -1,6 +1,6 @@
 {
-  "name": "victoriatraces-datasource",
-  "version": "0.0.1",
+  "name": "victoriametrics-traces-datasource",
+  "version": "1.0.0",
   "description": "VictoriaTraces datasource plugin for Grafana",
   "scripts": {
     "build": "webpack -c ./webpack.config.ts --env production",
@@ -13,24 +13,26 @@
     "lint": "eslint --cache .",
     "lint:fix": "npm run lint -- --fix",
     "server": "docker compose up",
-    "sign": "npx --yes @grafana/sign-plugin@latest"
+    "sign": "npx --yes @grafana/sign-plugin@latest",
+    "e2e": "playwright test",
+    "e2e:ui": "playwright test --ui",
+    "e2e:conformance": "playwright test e2e/filters.conformance.spec.ts"
   },
   "author": "dmitryk-dk",
   "license": "Apache-2.0",
-  "overrides": {
-    "ajv": "^8.0.0"
-  },
   "devDependencies": {
-    "ajv": "^8.0.0",
-    "@types/dagre": "^0.7.52",
     "@grafana/eslint-config": "^9.0.0",
+    "@grafana/plugin-e2e": "^3.12.0",
     "@grafana/tsconfig": "^2.0.1",
+    "@playwright/test": "^1.63.0",
+    "@stylistic/eslint-plugin-ts": "^2.13.0",
     "@swc/core": "^1.15.18",
     "@swc/helpers": "^0.5.19",
     "@swc/jest": "^0.2.39",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
+    "@types/dagre": "^0.7.52",
     "@types/jest": "^30.0.0",
     "@types/node": "^25.4.0",
     "@types/react": "^19.2.14",
@@ -39,6 +41,8 @@
     "copy-webpack-plugin": "^14.0.0",
     "css-loader": "^7.1.4",
     "eslint": "^10.0.3",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-jsdoc": "^50.6.3",
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-webpack-plugin": "^5.0.3",
@@ -63,12 +67,21 @@
     "webpack-subresource-integrity": "^5.2.0-rc.1",
     "webpack-virtual-modules": "^0.6.2"
   },
+  "overrides": {
+    "ajv": "^6.14.0",
+    "ajv-keywords": "^3.5.2",
+    "schema-utils": "^3.3.0",
+    "hermes-parser": "^0.36.1",
+    "immutable": "^5.1.8",
+    "js-cookie": "^3.0.7"
+  },
   "dependencies": {
     "@dagrejs/dagre": "^1.1.4",
     "@grafana/data": "^12.4.1",
     "@grafana/runtime": "^12.4.1",
     "@grafana/schema": "^12.4.1",
     "@grafana/ui": "^12.4.1",
+    "@tanstack/react-virtual": "^3.14.2",
     "@xyflow/react": "^12.6.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",

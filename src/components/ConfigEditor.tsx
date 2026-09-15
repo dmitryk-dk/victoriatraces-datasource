@@ -180,8 +180,8 @@ export function ConfigEditor({ options, onOptionsChange }: Props) {
             <strong>Label mappings</strong> — map a span field (service, trace_id, custom tag…)
             to the metric label it corresponds to. The plugin auto-builds a single
             MetricsQL selector <code>{'{label="value", ...}'}</code> and renders one
-            <em> Metrics</em> button. Use this when you just want "show me this service's
-            metrics".
+            <em> Metrics</em> button. Use this when you just want &quot;show me this
+            service&apos;s metrics&quot;.
           </li>
           <li>
             <strong>Named queries</strong> — write full MetricsQL queries with{' '}

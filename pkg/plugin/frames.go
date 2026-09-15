@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/grafana/grafana-plugin-sdk-go/data"
 )
@@ -135,7 +136,168 @@ func TracesToFrame(traces []JaegerTrace) *data.Frame {
 	// puts this in a separate panel section from nodeGraph frames.
 	frame.SetMeta(&data.FrameMeta{
 		PreferredVisualization:         "trace",
-		PreferredVisualizationPluginID: "victoriatraces-panel",
+		PreferredVisualizationPluginID: "victoriametrics-traces-panel",
+	})
+
+	return frame
+}
+
+// TraceListRowsToFrame renders the LogsQL trace-list aggregation as a frame.
+//
+// Unlike TraceSearchResultToFrame, which derives its columns from whole traces
+// fetched via the Jaeger API, these rows are already aggregated per trace, so
+// span and error counts are exact and no spans need to be transferred.
+func TraceListRowsToFrame(rows []TraceListRow, customFields []string, dsUID string) *data.Frame {
+	var (
+		traceIDs       []string
+		rootServices   []string
+		rootOperations []string
+		serviceLists   []string
+		startTimes     []time.Time
+		durationsMs    []float64
+		spanCounts     []int64
+		errorCounts    []int64
+		matchedSpans   []string
+		partials       []bool
+	)
+
+	for _, row := range rows {
+		// A row whose timestamp will not parse cannot be placed on the time
+		// axis; skip it rather than anchoring it to the epoch.
+		startTime, err := time.Parse(time.RFC3339Nano, row.StartTime)
+		if err != nil {
+			continue
+		}
+
+		traceIDs = append(traceIDs, row.TraceID)
+		rootServices = append(rootServices, row.RootService)
+		rootOperations = append(rootOperations, row.RootOperation)
+		// The services set is variable-length, so it travels as JSON in one
+		// column rather than forcing a fixed column per service.
+		serviceLists = append(serviceLists, marshalServices(row.Services))
+		startTimes = append(startTimes, startTime)
+		durationsMs = append(durationsMs, float64(row.DurationMicros)/1000.0)
+		spanCounts = append(spanCounts, int64(row.Spans))
+		errorCounts = append(errorCounts, int64(row.Errors))
+		matchedSpans = append(matchedSpans, row.MatchedSpanID)
+		partials = append(partials, row.Partial)
+	}
+
+	// One column per requested field, named "attr:<field>" so the panel can tell
+	// them apart from the fixed columns.
+	attrColumns := make(map[string][]string, len(customFields))
+	for _, field := range customFields {
+		if field == "" {
+			continue
+		}
+		values := make([]string, 0, len(traceIDs))
+		for _, row := range rows {
+			if _, err := time.Parse(time.RFC3339Nano, row.StartTime); err != nil {
+				continue
+			}
+			values = append(values, row.Attrs[field])
+		}
+		attrColumns[field] = values
+	}
+
+	frame := data.NewFrame("trace_list",
+		data.NewField("traceID", nil, traceIDs),
+		data.NewField("rootService", nil, rootServices),
+		data.NewField("rootOperation", nil, rootOperations),
+		data.NewField("services", nil, serviceLists),
+		data.NewField("startTime", nil, startTimes),
+		data.NewField("durationMs", nil, durationsMs),
+		data.NewField("spans", nil, spanCounts),
+		data.NewField("errors", nil, errorCounts),
+		data.NewField("matchedSpanID", nil, matchedSpans),
+		data.NewField("partial", nil, partials),
+	)
+
+	for _, field := range customFields {
+		if values, ok := attrColumns[field]; ok {
+			frame.Fields = append(frame.Fields, data.NewField("attr:"+field, nil, values))
+		}
+	}
+
+	frame.SetMeta(&data.FrameMeta{
+		PreferredVisualization:         "trace",
+		PreferredVisualizationPluginID: "victoriametrics-traces-panel",
+		Custom:                         map[string]interface{}{"datasourceUid": dsUID},
+	})
+
+	return frame
+}
+
+// marshalServices encodes the per-trace service set for its frame column.
+func marshalServices(services []string) string {
+	if len(services) == 0 {
+		return "[]"
+	}
+	b, err := json.Marshal(services)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+// SpanListRowsToFrame renders individual spans as a frame. Shares the panel
+// with the trace list; the frame name is what tells them apart.
+func SpanListRowsToFrame(rows []SpanListRow, customFields []string, dsUID string) *data.Frame {
+	var (
+		traceIDs    []string
+		spanIDs     []string
+		services    []string
+		operations  []string
+		startTimes  []time.Time
+		durationsMs []float64
+		kinds       []string
+		statusCodes []int64
+	)
+
+	kept := make([]SpanListRow, 0, len(rows))
+	for _, row := range rows {
+		startTime, err := time.Parse(time.RFC3339Nano, row.StartTime)
+		if err != nil {
+			continue
+		}
+		kept = append(kept, row)
+
+		traceIDs = append(traceIDs, row.TraceID)
+		spanIDs = append(spanIDs, row.SpanID)
+		services = append(services, row.Service)
+		operations = append(operations, row.Operation)
+		startTimes = append(startTimes, startTime)
+		durationsMs = append(durationsMs, float64(row.DurationMicros)/1000.0)
+		kinds = append(kinds, row.Kind)
+		statusCodes = append(statusCodes, int64(row.StatusCode))
+	}
+
+	frame := data.NewFrame("span_list",
+		data.NewField("traceID", nil, traceIDs),
+		data.NewField("spanID", nil, spanIDs),
+		data.NewField("service", nil, services),
+		data.NewField("operation", nil, operations),
+		data.NewField("startTime", nil, startTimes),
+		data.NewField("durationMs", nil, durationsMs),
+		data.NewField("kind", nil, kinds),
+		data.NewField("statusCode", nil, statusCodes),
+	)
+
+	for _, field := range customFields {
+		if field == "" {
+			continue
+		}
+		values := make([]string, 0, len(kept))
+		for _, row := range kept {
+			values = append(values, row.Attrs[field])
+		}
+		frame.Fields = append(frame.Fields, data.NewField("attr:"+field, nil, values))
+	}
+
+	frame.SetMeta(&data.FrameMeta{
+		PreferredVisualization:         "trace",
+		PreferredVisualizationPluginID: "victoriametrics-traces-panel",
+		Custom:                         map[string]interface{}{"datasourceUid": dsUID},
 	})
 
 	return frame
@@ -210,7 +372,7 @@ func TraceSearchResultToFrame(traces []JaegerTrace) *data.Frame {
 
 	frame.SetMeta(&data.FrameMeta{
 		PreferredVisualization:         "trace",
-		PreferredVisualizationPluginID: "victoriatraces-panel",
+		PreferredVisualizationPluginID: "victoriametrics-traces-panel",
 	})
 
 	return frame
@@ -248,20 +410,46 @@ func serviceForSpan(trace JaegerTrace, spanID string) string {
 	return ""
 }
 
-// spanHasError returns true if a span has error=true in its tags.
+// spanHasError reports whether a span failed.
+//
+// Two spellings reach here. The Jaeger API synthesises `error=true`; spans
+// rebuilt from LogsQL (trace-by-ID) carry the stored OTLP status instead, as
+// `otel.status_code` — 0 unset, 1 ok, 2 error. Matching only the first left a
+// failing trace drawing an all-green node graph.
 func spanHasError(span JaegerSpan) bool {
 	for _, tag := range span.Tags {
-		if tag.Key == "error" {
+		switch tag.Key {
+		case "error":
 			switch v := tag.Value.(type) {
 			case bool:
-				return v
+				if v {
+					return true
+				}
 			case string:
-				return v == "true"
+				if v == "true" {
+					return true
+				}
+			}
+		case "otel.status_code":
+			switch v := tag.Value.(type) {
+			case string:
+				if v == otelStatusCodeError {
+					return true
+				}
+			case float64:
+				// A JSON-decoded tag arrives as a number rather than a string.
+				if int(v) == 2 {
+					return true
+				}
 			}
 		}
 	}
 	return false
 }
+
+// otelStatusCodeError is the OTLP status for a failed span, as VictoriaTraces
+// stores it.
+const otelStatusCodeError = "2"
 
 // nodeGraphStats holds per-service aggregated stats for the node graph.
 type nodeGraphStats struct {
@@ -374,7 +562,7 @@ func TraceToNodeGraphFrames(traces []JaegerTrace) (*data.Frame, *data.Frame) {
 	)
 	nodesFrame.SetMeta(&data.FrameMeta{
 		PreferredVisualization:         "nodeGraph",
-		PreferredVisualizationPluginID: "victoriatraces-panel-graph",
+		PreferredVisualizationPluginID: "victoriametrics-traces-nodegraph-panel",
 	})
 
 	// --- Edges frame ---
@@ -416,8 +604,46 @@ func TraceToNodeGraphFrames(traces []JaegerTrace) (*data.Frame, *data.Frame) {
 	)
 	edgesFrame.SetMeta(&data.FrameMeta{
 		PreferredVisualization:         "nodeGraph",
-		PreferredVisualizationPluginID: "victoriatraces-panel-graph",
+		PreferredVisualizationPluginID: "victoriametrics-traces-nodegraph-panel",
 	})
 
 	return nodesFrame, edgesFrame
+}
+
+// TraceChartsFrame is the marker frame for the charts panel.
+//
+// Explore groups custom frames by their panel id and gives each group its own
+// container, so the charts get their own panel — and their own height — rather
+// than sharing the trace list's. The charts fetch what they draw from the
+// resource endpoints, so the frame carries no rows: only the datasource uid
+// they need to make those calls.
+func TraceChartsFrame(dsUID string) *data.Frame {
+	frame := data.NewFrame("trace_charts")
+	frame.SetMeta(&data.FrameMeta{
+		PreferredVisualization:         "trace",
+		PreferredVisualizationPluginID: "victoriametrics-traces-charts-panel",
+		Custom:                         map[string]interface{}{"datasourceUid": dsUID},
+	})
+	return frame
+}
+
+// withQueryContext records the query a frame answers in its metadata.
+//
+// Explore builds a custom panel's data as {series, state, timeRange}: there is
+// no request on it, so `data.request.targets` — where the panels used to read
+// the services, filters and columns in force — is always undefined there. The
+// frame is the only channel that survives, so the executed query travels on it.
+func withQueryContext(frame *data.Frame, query json.RawMessage) {
+	if frame == nil {
+		return
+	}
+	if frame.Meta == nil {
+		frame.Meta = &data.FrameMeta{}
+	}
+	custom, ok := frame.Meta.Custom.(map[string]interface{})
+	if !ok {
+		custom = map[string]interface{}{}
+	}
+	custom["query"] = query
+	frame.Meta.Custom = custom
 }

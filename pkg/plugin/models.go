@@ -1,6 +1,11 @@
 package plugin
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+	"strconv"
+	"strings"
+)
 
 // JaegerResponse is the top-level response from the Jaeger-compatible API.
 type JaegerResponse struct {
@@ -71,6 +76,56 @@ type JaegerOperationsResponse struct {
 	Data   []string      `json:"data"`
 	Total  int           `json:"total"`
 	Errors []interface{} `json:"errors"`
+}
+
+// ServiceDependency is one edge of the service dependency graph returned by
+// /select/jaeger/api/dependencies.
+type ServiceDependency struct {
+	Parent    string `json:"parent"`
+	Child     string `json:"child"`
+	CallCount int64  `json:"callCount"`
+}
+
+// JaegerDependenciesResponse is the response from /select/jaeger/api/dependencies.
+type JaegerDependenciesResponse struct {
+	Data   []ServiceDependency `json:"data"`
+	Total  int                 `json:"total"`
+	Errors []interface{}       `json:"errors"`
+}
+
+// FlexInt64 accepts a JSON number or a JSON string holding a number. The Tempo
+// search API is inconsistent about which it uses for nanosecond timestamps —
+// upstream Tempo quotes them, VictoriaTraces does not.
+type FlexInt64 int64
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (f *FlexInt64) UnmarshalJSON(b []byte) error {
+	s := strings.Trim(string(b), `"`)
+	if s == "" || s == "null" {
+		*f = 0
+		return nil
+	}
+	// Durations occasionally arrive fractional (e.g. 12.5); truncate rather than fail.
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return fmt.Errorf("parsing %q as a number: %w", s, err)
+	}
+	*f = FlexInt64(v)
+	return nil
+}
+
+// TempoTraceSummary is one entry from /select/tempo/api/search.
+type TempoTraceSummary struct {
+	TraceID           string    `json:"traceID"`
+	RootServiceName   string    `json:"rootServiceName"`
+	RootTraceName     string    `json:"rootTraceName"`
+	StartTimeUnixNano FlexInt64 `json:"startTimeUnixNano"`
+	DurationMs        FlexInt64 `json:"durationMs"`
+}
+
+// TempoSearchResponse is the response from /select/tempo/api/search.
+type TempoSearchResponse struct {
+	Traces []TempoTraceSummary `json:"traces"`
 }
 
 // LogsQL Prometheus-style response types for /select/logsql/stats_query_range.

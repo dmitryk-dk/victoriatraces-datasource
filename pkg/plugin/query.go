@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -14,8 +15,17 @@ import (
 	"github.com/grafana/grafana-plugin-sdk-go/data"
 )
 
+func cancelledResponse(ctx context.Context, err error) (backend.DataResponse, bool) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
+		return backend.DataResponse{}, true
+	}
+	return backend.DataResponse{}, false
+}
+
 const (
 	queryTypeSearch        = "search"
+	queryTypeTraceList     = "traceList"
+	queryTypeSpanList      = "spanList"
 	queryTypeTraceID       = "traceId"
 	queryTypeLogsQL        = "logsql"
 	queryTypeLogsQLInstant = "logsql-instant"
@@ -34,6 +44,17 @@ type queryModel struct {
 	OperationName string `json:"operationName"`
 	Tags          string `json:"tags"`
 	Limit         int    `json:"limit"`
+	// Search mode: Jaeger-style duration bounds, e.g. "100ms", "2s".
+	MinDuration string `json:"minDuration"`
+	MaxDuration string `json:"maxDuration"`
+	// Trace-list mode: the LogsQL fragments the filter bar produced. Where is
+	// applied to spans, PostFilter to the per-trace aggregate.
+	Where      string `json:"where"`
+	PostFilter string `json:"postFilter"`
+	// CustomFields are extra span fields shown as list columns.
+	CustomFields []string `json:"customFields"`
+	// MatchCond records which span satisfied the service/operation filter.
+	MatchCond string `json:"matchCond"`
 	// LogsQL mode fields
 	Expr           string   `json:"expr"`
 	Step           string   `json:"step"`
@@ -43,7 +64,7 @@ type queryModel struct {
 }
 
 // handleQuery dispatches a single DataQuery to the appropriate handler.
-func (d *Datasource) handleQuery(ctx context.Context, query backend.DataQuery) backend.DataResponse {
+func (d *Datasource) handleQuery(ctx context.Context, query backend.DataQuery, dsUID string) backend.DataResponse {
 	var qm queryModel
 	if err := json.Unmarshal(query.JSON, &qm); err != nil {
 		return backend.ErrDataResponse(backend.StatusBadRequest, fmt.Sprintf("parsing query: %v", err))
@@ -51,7 +72,11 @@ func (d *Datasource) handleQuery(ctx context.Context, query backend.DataQuery) b
 
 	switch qm.QueryType {
 	case queryTypeTraceID:
-		return d.queryTrace(ctx, qm)
+		return d.queryTrace(ctx, query, qm)
+	case queryTypeTraceList:
+		return d.queryTraceList(ctx, query, qm, dsUID)
+	case queryTypeSpanList:
+		return d.querySpanList(ctx, query, qm, dsUID)
 	case queryTypeLogsQL:
 		return d.queryLogsQL(ctx, query, qm)
 	case queryTypeLogsQLInstant:
@@ -65,26 +90,38 @@ func (d *Datasource) handleQuery(ctx context.Context, query backend.DataQuery) b
 	}
 }
 
-func (d *Datasource) queryTrace(ctx context.Context, qm queryModel) backend.DataResponse {
+func (d *Datasource) queryTrace(ctx context.Context, query backend.DataQuery, qm queryModel) backend.DataResponse {
 	if qm.TraceID == "" {
 		return backend.ErrDataResponse(backend.StatusBadRequest, "traceId is required")
 	}
 
-	resp, err := d.client.GetTrace(ctx, qm.TraceID)
+	// The stored spans, not the Jaeger API: the same source the trace-detail
+	// resource reads, so a trace one of them can show the other can too, and a
+	// trace still being ingested comes back partial rather than as an error.
+	body, err := d.client.QueryLogsQLStream(
+		ctx,
+		buildTraceSpansQuery(qm.TraceID),
+		query.TimeRange.From.Format(time.RFC3339Nano),
+		query.TimeRange.To.Format(time.RFC3339Nano),
+	)
 	if err != nil {
-		if IsNotFound(err) {
-			return backend.ErrDataResponse(backend.StatusNotFound, fmt.Sprintf("trace %q not found — it may have expired or not yet been ingested", qm.TraceID))
+		if r, ok := cancelledResponse(ctx, err); ok {
+			return r
 		}
 		return backend.ErrDataResponse(backend.StatusInternal, fmt.Sprintf("fetching trace: %v", err))
 	}
-	// VictoriaTraces can also return 200 with an empty Data slice — surface
-	// the same friendly NotFound response in that case.
-	if len(resp.Data) == 0 {
-		return backend.ErrDataResponse(backend.StatusNotFound, fmt.Sprintf("trace %q not found", qm.TraceID))
+	trace, err := parseTraceFromSpans(qm.TraceID, body)
+	closeBody(body)
+	if err != nil {
+		return backend.ErrDataResponse(backend.StatusInternal, fmt.Sprintf("parsing trace: %v", err))
 	}
+	if len(trace.Spans) == 0 {
+		return backend.ErrDataResponse(backend.StatusNotFound, fmt.Sprintf("trace %q not found — it may have expired or not yet been ingested", qm.TraceID))
+	}
+	traces := []JaegerTrace{trace}
 
-	traceFrame := TracesToFrame(resp.Data)
-	nodesFrame, edgesFrame := TraceToNodeGraphFrames(resp.Data)
+	traceFrame := TracesToFrame(traces)
+	nodesFrame, edgesFrame := TraceToNodeGraphFrames(traces)
 	return backend.DataResponse{Frames: data.Frames{traceFrame, nodesFrame, edgesFrame}}
 }
 
@@ -102,6 +139,9 @@ func (d *Datasource) queryLogsQL(ctx context.Context, query backend.DataQuery, q
 
 	resp, err := d.client.QueryLogsQLRange(ctx, expr, query.TimeRange.From, query.TimeRange.To, step, qm.TimezoneOffset)
 	if err != nil {
+		if r, ok := cancelledResponse(ctx, err); ok {
+			return r
+		}
 		return backend.ErrDataResponse(backend.StatusInternal, fmt.Sprintf("logsql query: %v", err))
 	}
 	if resp.Status != "success" {
@@ -133,6 +173,9 @@ func (d *Datasource) queryLogsQLInstant(ctx context.Context, query backend.DataQ
 
 	resp, err := d.client.QueryLogsQLInstant(ctx, expr, query.TimeRange.To, qm.TimezoneOffset)
 	if err != nil {
+		if r, ok := cancelledResponse(ctx, err); ok {
+			return r
+		}
 		return backend.ErrDataResponse(backend.StatusInternal, fmt.Sprintf("logsql instant query: %v", err))
 	}
 	if resp.Status != "success" {
@@ -163,9 +206,12 @@ func (d *Datasource) queryLogsQLLogs(ctx context.Context, query backend.DataQuer
 
 	body, err := d.client.QueryLogsQLLogs(ctx, expr, query.TimeRange.From, query.TimeRange.To, limit, qm.TimezoneOffset)
 	if err != nil {
+		if r, ok := cancelledResponse(ctx, err); ok {
+			return r
+		}
 		return backend.ErrDataResponse(backend.StatusInternal, fmt.Sprintf("logsql logs query: %v", err))
 	}
-	defer body.Close()
+	defer closeBody(body)
 
 	return parseLogsResponse(body)
 }
@@ -184,9 +230,12 @@ func (d *Datasource) queryLogsQLHits(ctx context.Context, query backend.DataQuer
 
 	body, err := d.client.QueryLogsQLHits(ctx, expr, query.TimeRange.From, query.TimeRange.To, step, qm.TimezoneOffset, qm.Fields)
 	if err != nil {
+		if r, ok := cancelledResponse(ctx, err); ok {
+			return r
+		}
 		return backend.ErrDataResponse(backend.StatusInternal, fmt.Sprintf("logsql hits query: %v", err))
 	}
-	defer body.Close()
+	defer closeBody(body)
 
 	return parseHitsResponse(body)
 }
@@ -514,6 +563,88 @@ func logsQLFloat(v interface{}) (*float64, error) {
 	return &f, nil
 }
 
+// querySpanList lists individual spans rather than traces.
+func (d *Datasource) querySpanList(ctx context.Context, query backend.DataQuery, qm queryModel, dsUID string) backend.DataResponse {
+	limit := qm.Limit
+	if limit <= 0 {
+		limit = defaultTraceListLimit
+	}
+
+	body, err := d.client.QuerySpanList(
+		ctx,
+		qm.Where,
+		limit,
+		query.TimeRange.From.Format(time.RFC3339Nano),
+		query.TimeRange.To.Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		if r, ok := cancelledResponse(ctx, err); ok {
+			return r
+		}
+		return backend.ErrDataResponse(backend.StatusInternal, fmt.Sprintf("listing spans: %v", err))
+	}
+	defer closeBody(body)
+
+	rows, err := parseSpanListRows(body, qm.CustomFields)
+	if err != nil {
+		return backend.ErrDataResponse(backend.StatusInternal, fmt.Sprintf("parsing span list: %v", err))
+	}
+
+	frames := data.Frames{
+		TraceChartsFrame(dsUID),
+		SpanListRowsToFrame(rows, qm.CustomFields, dsUID),
+	}
+	for _, frame := range frames {
+		withQueryContext(frame, query.JSON)
+	}
+	return backend.DataResponse{Frames: frames}
+}
+
+// queryTraceList runs the per-trace LogsQL aggregation behind the trace list.
+//
+// The time bounds come from Grafana's range rather than a paging cursor: in
+// Explore the range *is* the control, so raising the limit or widening the
+// range replaces the app page's infinite scroll.
+func (d *Datasource) queryTraceList(ctx context.Context, query backend.DataQuery, qm queryModel, dsUID string) backend.DataResponse {
+	limit := qm.Limit
+	if limit <= 0 {
+		limit = defaultTraceListLimit
+	}
+
+	body, err := d.client.QueryTraceList(ctx, TraceListParams{
+		Where:        qm.Where,
+		PostFilter:   qm.PostFilter,
+		MatchCond:    qm.MatchCond,
+		CustomFields: qm.CustomFields,
+		Start:        query.TimeRange.From.Format(time.RFC3339Nano),
+		End:          query.TimeRange.To.Format(time.RFC3339Nano),
+		Limit:        limit,
+	})
+	if err != nil {
+		if r, ok := cancelledResponse(ctx, err); ok {
+			return r
+		}
+		return backend.ErrDataResponse(backend.StatusInternal, fmt.Sprintf("listing traces: %v", err))
+	}
+	defer closeBody(body)
+
+	rows, err := parseTraceListRows(body, qm.CustomFields)
+	if err != nil {
+		return backend.ErrDataResponse(backend.StatusInternal, fmt.Sprintf("parsing trace list: %v", err))
+	}
+
+	// The charts frame comes first: Explore stacks custom panels in the order
+	// their frames arrive, so the charts sit above the list they describe.
+	frames := data.Frames{
+		TraceChartsFrame(dsUID),
+		TraceListRowsToFrame(rows, qm.CustomFields, dsUID),
+	}
+	for _, frame := range frames {
+		withQueryContext(frame, query.JSON)
+	}
+	return backend.DataResponse{Frames: frames}
+}
+
 func (d *Datasource) querySearch(ctx context.Context, query backend.DataQuery, qm queryModel) backend.DataResponse {
 	limit := qm.Limit
 	if limit <= 0 {
@@ -521,14 +652,19 @@ func (d *Datasource) querySearch(ctx context.Context, query backend.DataQuery, q
 	}
 
 	resp, err := d.client.SearchTraces(ctx, SearchParams{
-		Service:   qm.ServiceName,
-		Operation: qm.OperationName,
-		Tags:      qm.Tags,
-		Start:     query.TimeRange.From,
-		End:       query.TimeRange.To,
-		Limit:     limit,
+		Service:     qm.ServiceName,
+		Operation:   qm.OperationName,
+		Tags:        qm.Tags,
+		Start:       query.TimeRange.From,
+		End:         query.TimeRange.To,
+		Limit:       limit,
+		MinDuration: qm.MinDuration,
+		MaxDuration: qm.MaxDuration,
 	})
 	if err != nil {
+		if r, ok := cancelledResponse(ctx, err); ok {
+			return r
+		}
 		return backend.ErrDataResponse(backend.StatusInternal, fmt.Sprintf("searching traces: %v", err))
 	}
 

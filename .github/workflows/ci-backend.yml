@@ -58,9 +58,9 @@ jobs:
         run: go vet ./pkg/...
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v7
         with:
-          version: v2.2.2
+          version: v2.12.2
           args: ./pkg/...
 
   test:
@@ -103,6 +103,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: backend-${{ github.sha }}
-          path: plugins/victoriatraces-datasource
+          path: plugins/victoriametrics-traces-datasource
           if-no-files-found: error
           retention-days: 7

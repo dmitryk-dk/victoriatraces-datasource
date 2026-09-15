@@ -3,7 +3,7 @@ import { css } from '@emotion/css';
 import { useStyles2 } from '@grafana/ui';
 import type { GrafanaTheme2 } from '@grafana/data';
 import { formatDurationMs } from '../utils/formatDuration';
-import { useTimelineRulerMarks } from '../utils/timelineRuler';
+import { collapseDuplicateLabels, useTimelineRulerMarks } from '../utils/timelineRuler';
 
 interface TimelineRulerProps {
   totalDurationMs: number;
@@ -48,7 +48,13 @@ const getStyles = (theme: GrafanaTheme2) => ({
 export function TimelineRuler({ totalDurationMs }: TimelineRulerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const styles = useStyles2(getStyles);
-  const marks = useTimelineRulerMarks(containerRef, totalDurationMs);
+  const rawMarks = useTimelineRulerMarks(containerRef, totalDurationMs);
+  // Neighbouring ticks can format to the same text on a short trace; showing
+  // it twice reads as a rendering fault.
+  const marks = React.useMemo(
+    () => collapseDuplicateLabels(rawMarks, formatDurationMs),
+    [rawMarks]
+  );
 
   return (
     <div ref={containerRef} className={styles.container}>
@@ -65,7 +71,7 @@ export function TimelineRuler({ totalDurationMs }: TimelineRulerProps) {
             style={{ left: `${mark.position}%`, transform: `translateX(${translateX})`, alignItems }}
           >
             <div className={styles.tick} />
-            <div className={styles.label}>{formatDurationMs(mark.valueMs)}</div>
+            <div className={styles.label}>{mark.label}</div>
           </div>
         );
       })}

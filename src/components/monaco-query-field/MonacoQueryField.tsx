@@ -6,6 +6,8 @@ import { GrafanaTheme2 } from '@grafana/data';
 import { selectors } from '@grafana/e2e-selectors';
 import { monacoTypes, ReactMonacoEditor, useTheme2 } from '@grafana/ui';
 
+import { LOGSQL_LANGUAGE_ID } from '../../lang/logsql/monarch';
+import { registerLogsqlLanguage, registerFetchersFor } from '../../lang/logsql/monaco';
 import { Props } from './MonacoQueryFieldProps';
 
 const options: monacoTypes.editor.IStandaloneEditorConstructionOptions = {
@@ -50,10 +52,11 @@ const getStyles = (theme: GrafanaTheme2, placeholder: string) => ({
 
 const MonacoQueryField = (props: Props) => {
   const containerRef = useRef<HTMLDivElement>(null);
-  const { onBlur, onRunQuery, initialValue, placeholder, readOnly } = props;
+  const { onBlur, onRunQuery, initialValue, placeholder, readOnly, fetchers } = props;
 
   const onRunQueryRef = useLatest(onRunQuery);
   const onBlurRef = useLatest(onBlur);
+  const fetchersRef = useLatest(fetchers);
 
   const theme = useTheme2();
   const styles = getStyles(theme, placeholder);
@@ -66,9 +69,18 @@ const MonacoQueryField = (props: Props) => {
     >
       <ReactMonacoEditor
         options={{ ...options, readOnly }}
-        language="plaintext"
+        language={LOGSQL_LANGUAGE_ID}
         value={initialValue}
+        beforeMount={(monaco) => registerLogsqlLanguage(monaco)}
         onMount={(editor, monaco) => {
+          const model = editor.getModel();
+          if (model) {
+            // Several LogsQL fields can be open at once, each against its own
+            // datasource and range, so the providers find theirs by model.
+            const forget = registerFetchersFor(model, fetchersRef.current);
+            editor.onDidDispose(forget);
+          }
+
           editor.onDidBlurEditorWidget(() => {
             onBlurRef.current(editor.getValue());
           });

@@ -12,7 +12,23 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/grafana/grafana-plugin-sdk-go/backend"
 )
+
+func readErrBody(body io.Reader) []byte {
+	b, err := io.ReadAll(body)
+	if err != nil {
+		backend.Logger.Warn("reading upstream error body", "error", err)
+	}
+	return b
+}
+
+func closeBody(body io.Closer) {
+	if err := body.Close(); err != nil {
+		backend.Logger.Debug("closing response body", "error", err)
+	}
+}
 
 // attrPrefixRe matches VictoriaTraces typed-attribute prefixes such as
 // "span_attr:", "resource_attr:", "scope_attr:". It is used to identify
@@ -61,10 +77,9 @@ func (c *Client) Ping(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("executing request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer closeBody(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return parseAPIError(resp.StatusCode, body)
+		return parseAPIError(resp.StatusCode, readErrBody(resp.Body))
 	}
 	return nil
 }
@@ -99,6 +114,9 @@ type SearchParams struct {
 	Start time.Time // Inclusive lower bound of the time range
 	End   time.Time // Inclusive upper bound of the time range
 	Limit int       // Maximum number of traces to return
+	// Duration bounds as the Jaeger API spells them, e.g. "100ms", "2s".
+	MinDuration string
+	MaxDuration string
 }
 
 // SearchTraces queries VictoriaTraces for traces matching the given parameters.
@@ -122,12 +140,208 @@ func (c *Client) SearchTraces(ctx context.Context, p SearchParams) (*JaegerRespo
 	if !p.End.IsZero() {
 		params.Set("end", strconv.FormatInt(p.End.UnixMicro(), 10))
 	}
+	if p.MinDuration != "" {
+		params.Set("minDuration", p.MinDuration)
+	}
+	if p.MaxDuration != "" {
+		params.Set("maxDuration", p.MaxDuration)
+	}
 	if p.Limit > 0 {
 		params.Set("limit", strconv.Itoa(p.Limit))
 	}
 
 	var result JaegerResponse
 	if err := c.get(ctx, "/select/jaeger/api/traces", params, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// TempoSearchParams holds the filters for a Tempo-API trace search.
+//
+// Paging is cursor-based rather than offset-based: End moves backwards through
+// time as pages are consumed, so a page boundary can never duplicate or skip a
+// trace the way a shifting offset can. The caller derives the next cursor from
+// the oldest trace it received.
+type TempoSearchParams struct {
+	// Query is a TraceQL/LogsQL filter. Empty is replaced by matchAllTracesQuery.
+	Query string
+	Start time.Time
+	End   time.Time
+	Limit int
+}
+
+// tempoSearchPath is the Tempo-compatible search endpoint. VictoriaTraces
+// serves it from v0.8.0; earlier versions answer "unsupported path requested",
+// which callers translate into version advice rather than a bare failure.
+const tempoSearchPath = "/select/tempo/api/search"
+
+// unsupportedPathMarker is how VictoriaTraces reports a route it does not
+// serve. The status alone cannot be trusted for this — it is a 400, the same
+// as a genuinely malformed query.
+const unsupportedPathMarker = "unsupported path requested"
+
+// isUnsupportedUpstreamPath reports whether err is the upstream saying it has
+// no such endpoint, rather than that the request was wrong.
+func isUnsupportedUpstreamPath(err error) bool {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	if apiErr.Status == http.StatusNotFound {
+		return true
+	}
+	return strings.Contains(apiErr.Message, unsupportedPathMarker)
+}
+
+// matchAllTracesQuery is the match-everything filter accepted by the Tempo
+// search endpoint. It rejects both an empty query ("missing query") and the
+// LogsQL wildcard "*" ("compound token cannot start with *").
+const matchAllTracesQuery = "{}"
+
+// SearchTracesTempo queries /select/tempo/api/search and returns trace summaries.
+// This is the endpoint behind the trace list; the Jaeger search endpoint returns
+// whole traces with all their spans, which is far more data than a list needs.
+func (c *Client) SearchTracesTempo(ctx context.Context, p TempoSearchParams) (*TempoSearchResponse, error) {
+	params := url.Values{}
+	query := p.Query
+	if query == "" {
+		query = matchAllTracesQuery
+	}
+	params.Set("q", query)
+	if !p.Start.IsZero() {
+		params.Set("start", strconv.FormatInt(p.Start.Unix(), 10))
+	}
+	if !p.End.IsZero() {
+		params.Set("end", strconv.FormatInt(p.End.Unix(), 10))
+	}
+	if p.Limit > 0 {
+		params.Set("limit", strconv.Itoa(p.Limit))
+	}
+
+	var result TempoSearchResponse
+	if err := c.get(ctx, tempoSearchPath, params, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// QueryTraceList runs the trace-list aggregation against /select/logsql/query
+// and returns the raw NDJSON body. The caller must close the returned
+// ReadCloser.
+//
+// start and end are passed through verbatim rather than as time.Time: the
+// paging cursor is the RFC3339 timestamp of the last row seen, and round-
+// tripping it through a coarser unit would risk re-serving or skipping rows.
+func (c *Client) QueryTraceList(ctx context.Context, p TraceListParams) (io.ReadCloser, error) {
+	params := url.Values{}
+	params.Set("query", buildTraceListQuery(p.Where, p.PostFilter, p.MatchCond, p.CustomFields, p.Limit))
+	if p.Start != "" {
+		params.Set("start", p.Start)
+	}
+	if p.End != "" {
+		params.Set("end", p.End)
+	}
+	return c.getStream(ctx, "/select/logsql/query", params)
+}
+
+// QueryLogsQLStream runs a prepared LogsQL query and returns the raw NDJSON
+// body. The caller must close the returned ReadCloser.
+func (c *Client) QueryLogsQLStream(ctx context.Context, query, start, end string) (io.ReadCloser, error) {
+	params := url.Values{}
+	params.Set("query", query)
+	if start != "" {
+		params.Set("start", start)
+	}
+	if end != "" {
+		params.Set("end", end)
+	}
+	return c.getStream(ctx, "/select/logsql/query", params)
+}
+
+// QueryOperationDurations returns the raw NDJSON duration sample behind the
+// preview panel's histogram. The caller must close the returned ReadCloser.
+func (c *Client) QueryOperationDurations(ctx context.Context, service, operation string, rootOnly bool, start, end string) (io.ReadCloser, error) {
+	params := url.Values{}
+	params.Set("query", buildOperationDurationsQuery(service, operation, rootOnly))
+	if start != "" {
+		params.Set("start", start)
+	}
+	if end != "" {
+		params.Set("end", end)
+	}
+	return c.getStream(ctx, "/select/logsql/query", params)
+}
+
+// QueryHeatmap runs the duration/time grid aggregation and returns the raw
+// NDJSON body. The caller must close the returned ReadCloser.
+func (c *Client) QueryHeatmap(ctx context.Context, where string, stepSeconds int64, start, end string, entity entityKind) (io.ReadCloser, error) {
+	params := url.Values{}
+	params.Set("query", buildHeatmapQuery(where, stepSeconds, entity))
+	if start != "" {
+		params.Set("start", start)
+	}
+	if end != "" {
+		params.Set("end", end)
+	}
+	return c.getStream(ctx, "/select/logsql/query", params)
+}
+
+// QueryFacet counts distinct traces per value of one field and returns the raw
+// NDJSON body. The caller must close the returned ReadCloser.
+func (c *Client) QueryFacet(ctx context.Context, where, field string, limit int, start, end string) (io.ReadCloser, error) {
+	params := url.Values{}
+	params.Set("query", buildFacetQuery(where, field, limit))
+	if start != "" {
+		params.Set("start", start)
+	}
+	if end != "" {
+		params.Set("end", end)
+	}
+	return c.getStream(ctx, "/select/logsql/query", params)
+}
+
+// QuerySpanList selects individual spans and returns the raw NDJSON body. The
+// caller must close the returned ReadCloser.
+func (c *Client) QuerySpanList(ctx context.Context, where string, limit int, start, end string) (io.ReadCloser, error) {
+	params := url.Values{}
+	params.Set("query", buildSpanListQuery(where, limit))
+	if start != "" {
+		params.Set("start", start)
+	}
+	if end != "" {
+		params.Set("end", end)
+	}
+	return c.getStream(ctx, "/select/logsql/query", params)
+}
+
+// QueryOperationStats aggregates a service's spans by operation name and
+// returns the raw NDJSON body. The caller must close the returned ReadCloser.
+func (c *Client) QueryOperationStats(ctx context.Context, service, start, end string) (io.ReadCloser, error) {
+	params := url.Values{}
+	params.Set("query", buildOperationStatsQuery(service))
+	if start != "" {
+		params.Set("start", start)
+	}
+	if end != "" {
+		params.Set("end", end)
+	}
+	return c.getStream(ctx, "/select/logsql/query", params)
+}
+
+// GetDependencies returns the service dependency graph. endTs and lookback are
+// both in milliseconds, matching the Jaeger API.
+func (c *Client) GetDependencies(ctx context.Context, endTs, lookback int64) (*JaegerDependenciesResponse, error) {
+	params := url.Values{}
+	if endTs > 0 {
+		params.Set("endTs", strconv.FormatInt(endTs, 10))
+	}
+	if lookback > 0 {
+		params.Set("lookback", strconv.FormatInt(lookback, 10))
+	}
+
+	var result JaegerDependenciesResponse
+	if err := c.get(ctx, "/select/jaeger/api/dependencies", params, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -182,8 +396,8 @@ func (c *Client) getStream(ctx context.Context, path string, params url.Values) 
 		return nil, fmt.Errorf("executing request: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		body := readErrBody(resp.Body)
+		closeBody(resp.Body)
 		return nil, parseAPIError(resp.StatusCode, body)
 	}
 	return resp.Body, nil
@@ -210,6 +424,15 @@ func (c *Client) QueryLogsQLLogs(ctx context.Context, expr string, start, end ti
 		params.Set("limit", strconv.Itoa(limit))
 	}
 	return c.getStream(ctx, "/select/logsql/query", params)
+}
+
+// QueryLogsQLTail opens a live-tail stream against /select/logsql/tail.
+// The endpoint streams NDJSON lines without a fixed end, so the caller must
+// use a timeout-less HTTP client and close the returned ReadCloser when done.
+func (c *Client) QueryLogsQLTail(ctx context.Context, expr string) (io.ReadCloser, error) {
+	params := url.Values{}
+	params.Set("query", expr)
+	return c.getStream(ctx, "/select/logsql/tail", params)
 }
 
 // QueryLogsQLHits queries /select/logsql/hits and returns the raw JSON body.
@@ -245,10 +468,23 @@ func pickMetaQuery(service, rawQuery string) string {
 	}
 }
 
+// setMetaRange scopes a metadata lookup to the range on screen. Without it the
+// suggestions come from the whole retention window, so they can name keys that
+// no longer occur in the range being looked at and miss ones that do.
+func setMetaRange(params url.Values, start, end time.Time) {
+	if !start.IsZero() {
+		params.Set("start", strconv.FormatInt(start.Unix(), 10))
+	}
+	if !end.IsZero() {
+		params.Set("end", strconv.FormatInt(end.Unix(), 10))
+	}
+}
+
 // GetFieldNames returns field names, optionally scoped by a raw LogsQL filter or a service name.
-func (c *Client) GetFieldNames(ctx context.Context, service, rawQuery string) (*FieldNamesResponse, error) {
+func (c *Client) GetFieldNames(ctx context.Context, service, rawQuery string, start, end time.Time) (*FieldNamesResponse, error) {
 	params := url.Values{}
 	params.Set("query", pickMetaQuery(service, rawQuery))
+	setMetaRange(params, start, end)
 	var result FieldNamesResponse
 	if err := c.get(ctx, "/select/logsql/field_names", params, &result); err != nil {
 		return nil, err
@@ -257,24 +493,16 @@ func (c *Client) GetFieldNames(ctx context.Context, service, rawQuery string) (*
 }
 
 // GetFieldValues returns values for a specific field, optionally scoped by a raw LogsQL filter or a service name.
-func (c *Client) GetFieldValues(ctx context.Context, field string, limit int, service, rawQuery string) (*FieldValuesResponse, error) {
+func (c *Client) GetFieldValues(ctx context.Context, field string, limit int, service, rawQuery string, start, end time.Time) (*FieldValuesResponse, error) {
 	params := url.Values{}
 	params.Set("query", pickMetaQuery(service, rawQuery))
+	setMetaRange(params, start, end)
 	params.Set("field", field)
 	if limit > 0 {
 		params.Set("limit", strconv.Itoa(limit))
 	}
 	var result FieldValuesResponse
 	if err := c.get(ctx, "/select/logsql/field_values", params, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// GetTrace retrieves a single trace by its ID.
-func (c *Client) GetTrace(ctx context.Context, traceID string) (*JaegerResponse, error) {
-	var result JaegerResponse
-	if err := c.get(ctx, "/select/jaeger/api/traces/"+traceID, nil, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -365,11 +593,10 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, out in
 	if err != nil {
 		return fmt.Errorf("executing request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer closeBody(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return parseAPIError(resp.StatusCode, body)
+		return parseAPIError(resp.StatusCode, readErrBody(resp.Body))
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {

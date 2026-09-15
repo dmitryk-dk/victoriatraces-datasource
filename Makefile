@@ -8,10 +8,17 @@ ifeq ($(PKG_TAG),)
 PKG_TAG := $(BUILDINFO_TAG)
 endif
 
-PLUGIN_ID=victoriatraces-datasource
+PLUGIN_ID=victoriametrics-traces-datasource
 APP_NAME=victoriatraces_backend_plugin
 
-GO_BUILDINFO = -X 'github.com/grafana/grafana-plugin-sdk-go/build.buildInfoJSON={\"time\":${DATEINFO_TAG},\"id\":\"${PLUGIN_ID}\",\"version\":\"${BUILDINFO_TAG}\",\"branch\":\"${PKG_TAG}\"}'
+PANEL_IDS= \
+	victoriametrics-traces-panel \
+	victoriametrics-traces-nodegraph-panel \
+	victoriametrics-traces-charts-panel
+
+RELEASE_IDS=$(PLUGIN_ID) $(PANEL_IDS)
+
+GO_BUILDINFO = -X 'github.com/grafana/grafana-plugin-sdk-go/build.buildInfoJSON={\"time\":${DATEINFO_TAG},\"id\":\"victoriametrics-traces-datasource\",\"version\":\"${BUILDINFO_TAG}\",\"branch\":\"${PKG_TAG}\"}'
 
 .PHONY: $(MAKECMDGOALS)
 
@@ -19,10 +26,11 @@ frontend-package-base-image:
 	docker build -t vt-frontend-builder-image -f Dockerfile $(shell pwd)
 
 frontend-build: frontend-package-base-image
-	mkdir -p .npm .cache && \
-	chown -R $(shell id -u):$(shell id -g) .npm .cache && \
+	mkdir -p .npm .cache .docker-node_modules && \
+	chown -R $(shell id -u):$(shell id -g) .npm .cache .docker-node_modules && \
 	docker run --rm \
 		-v "$(shell pwd):/$(PLUGIN_ID)" \
+		-v "$(shell pwd)/.docker-node_modules:/$(PLUGIN_ID)/node_modules" \
 		-v "$(shell pwd)/.npm:/.npm" \
 		-v "$(shell pwd)/.cache:/.cache" \
 		-w /$(PLUGIN_ID) \
@@ -43,8 +51,8 @@ vt-plugin-pack: vt-plugin-build
 	mkdir -p release && \
 	$(eval PACKAGE_NAME := $(PLUGIN_ID)-$(PKG_TAG)) \
 	cd plugins/ && \
-	tar -czf ../release/$(PACKAGE_NAME).tar.gz ./$(PLUGIN_ID) && \
-	zip -q -r ../release/$(PACKAGE_NAME).zip ./$(PLUGIN_ID) && \
+	tar -czf ../release/$(PACKAGE_NAME).tar.gz $(addprefix ./,$(RELEASE_IDS)) && \
+	zip -q -r ../release/$(PACKAGE_NAME).zip $(addprefix ./,$(RELEASE_IDS)) && \
 	cd - && \
 	sha1sum release/$(PACKAGE_NAME).zip > release/$(PACKAGE_NAME)_checksums_zip.txt && \
 	sha1sum release/$(PACKAGE_NAME).tar.gz > release/$(PACKAGE_NAME)_checksums_tar.gz.txt
@@ -92,7 +100,7 @@ GOLANGCI_LINT = $(LOCALBIN)/golangci-lint-$(GOLANGCI_LINT_VERSION)
 
 PLUGINCHECK2_VERSION = v0.38.0
 MAGE_VERSION = v1.15.0
-GOLANGCI_LINT_VERSION = v2.2.2
+GOLANGCI_LINT_VERSION = v2.12.2
 
 .PHONY: plugincheck2
 plugincheck2: $(PLUGINCHECK2)

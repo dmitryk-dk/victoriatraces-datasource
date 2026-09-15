@@ -233,7 +233,7 @@ function detectLevel(
   return '';
 }
 
-const LEVEL_KEYWORDS: [string, string][] = [
+const LEVEL_KEYWORDS: Array<[string, string]> = [
   ['critical', 'critical'],
   ['fatal', 'critical'],
   ['error', 'error'],

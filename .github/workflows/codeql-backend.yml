@@ -1,23 +1,12 @@
 name: CodeQL / backend
 
-# Static security analysis for the Go backend. Findings show up under
-# the repo's Security tab → Code scanning.
+# Static security analysis for the Go backend. Disabled on push/PR because
+# GitHub Code Scanning is not available on private repos without GitHub
+# Advanced Security. Re-enable the push/pull_request/schedule triggers once
+# the repo is public (or GHAS is purchased) and Code scanning is turned on
+# in repo Settings → Security → Code security.
 on:
-  push:
-    branches: [main, master]
-    paths:
-      - '.github/workflows/codeql-backend.yml'
-      - 'go.*'
-      - 'pkg/**'
-  pull_request:
-    branches: [main, master]
-    paths:
-      - '.github/workflows/codeql-backend.yml'
-      - 'go.*'
-      - 'pkg/**'
-  schedule:
-    # Weekly scan catches CVEs that land after a PR-quiet week.
-    - cron: '0 6 * * 1'
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}

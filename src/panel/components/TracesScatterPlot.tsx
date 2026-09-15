@@ -71,9 +71,9 @@ const getStyles = (theme: GrafanaTheme2) => ({
 
 function CustomTooltip({ active, payload }: any) {
   const styles = useStyles2(getStyles);
-  if (!active || !payload?.length) return null;
+  if (!active || !payload?.length) {return null;}
   const d = payload[0]?.payload as PlotItem;
-  if (!d) return null;
+  if (!d) {return null;}
   return (
     <div className={styles.tooltip}>
       <div className={styles.tooltipRow}>

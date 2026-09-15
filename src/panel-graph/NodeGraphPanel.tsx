@@ -92,7 +92,7 @@ function navigateExploreToService(service: string) {
 export function NodeGraphPanel({ data, width, height }: PanelProps) {
   const styles = useStyles2(getStyles);
 
-  const handleNodeClick = useCallback(navigateExploreToService, []);
+  const handleNodeClick = useCallback((service: string) => navigateExploreToService(service), []);
 
   const nodesFrame = data.series.find((f) => f.name === 'nodes');
   const edgesFrame = data.series.find((f) => f.name === 'edges');

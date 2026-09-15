@@ -1,59 +1,17 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { css } from '@emotion/css';
-import { useStyles2 } from '@grafana/ui';
-import { getDataSourceSrv, locationService } from '@grafana/runtime';
+import { Icon, IconButton, Input, useStyles2 } from '@grafana/ui';
 import type { GrafanaTheme2 } from '@grafana/data';
 import type { Trace, TraceSpan } from '../types';
-import { DEFAULT_TRACE_TO_LOGS_QUERY, type TraceToLogsOptions, type TraceToMetricsOptions } from '../../types';
+import { type TraceToLogsOptions, type TraceToMetricsOptions } from '../../types';
+import {
+  buildAutoMetricsSelector,
+  openAutoMetricsForSpan,
+  openLogsForSpan,
+  openMetricsQueryForSpan,
+} from '../../trace-ui/correlations';
 import { formatDurationMs, formatTimestampMs } from '../utils/formatDuration';
-
-// Common field-name variants so `${__span.traceId}`, `${__span.trace_id}`,
-// `${__span.trace.id}`, and `${__span.traceID}` all resolve to the same value.
-// Patterns borrowed from the visum correlation model.
-const TRACE_ID_FIELD_RE = /^trace[._-]?id$/i;
-const SPAN_ID_FIELD_RE = /^span[._-]?id$/i;
-const SERVICE_FIELD_RE = /^service([._-]?name)?$/i;
-const OPERATION_FIELD_RE = /^operation([._-]?name)?$/i;
-
-// MetricsQL label-value escaping. Prometheus / VictoriaMetrics expect
-// double-quoted values with `\`, `"`, `\n`, and `\t` escaped.
-function escapeMetricsQLValue(value: string): string {
-  return value
-    .replace(/\\/g, '\\\\')
-    .replace(/"/g, '\\"')
-    .replace(/\n/g, '\\n')
-    .replace(/\t/g, '\\t');
-}
-
-// Resolve a span-relative field by name. Order:
-// 1. span.tags (user-defined span attributes)
-// 2. process.tags (resource attributes — service.name, k8s.*, etc.)
-// 3. top-level span fields by regex match (traceID/spanID/operationName/serviceName)
-// 4. `tags.<key>` explicit prefix is also handled by the caller.
-function resolveSpanField(trace: Trace | undefined, span: TraceSpan, field: string): string {
-  const spanTag = span.tags?.find((t) => t.key === field);
-  if (spanTag && spanTag.value !== '') {
-    return String(spanTag.value);
-  }
-  const process = (span.processID && trace?.processes?.[span.processID]) || undefined;
-  const procTag = process?.tags?.find((t) => t.key === field);
-  if (procTag && procTag.value !== '') {
-    return String(procTag.value);
-  }
-  if (TRACE_ID_FIELD_RE.test(field)) {
-    return span.traceID ?? '';
-  }
-  if (SPAN_ID_FIELD_RE.test(field)) {
-    return span.spanID ?? '';
-  }
-  if (OPERATION_FIELD_RE.test(field)) {
-    return span.operationName ?? '';
-  }
-  if (SERVICE_FIELD_RE.test(field) && process?.serviceName) {
-    return process.serviceName;
-  }
-  return '';
-}
+import { groupSpanFields } from '../../trace-logic/spanFields';
 
 interface SpanDetailsProps {
   trace?: Trace;
@@ -66,6 +24,20 @@ interface SpanDetailsProps {
 type Tab = 'info' | 'fields' | 'logs';
 
 const getStyles = (theme: GrafanaTheme2) => ({
+  fieldGroupHeader: css({
+    marginTop: theme.spacing(1),
+    color: theme.colors.text.secondary,
+    fontSize: theme.typography.bodySmall.fontSize,
+    fontWeight: theme.typography.fontWeightMedium,
+    textTransform: 'uppercase',
+    letterSpacing: '0.04em',
+  }),
+  noFields: css({
+    padding: theme.spacing(2),
+    textAlign: 'center',
+    color: theme.colors.text.secondary,
+    fontSize: theme.typography.bodySmall.fontSize,
+  }),
   container: css({
     width: '100%',
     minWidth: 320,
@@ -279,131 +251,44 @@ function ExpandableCell({ value, styles }: { value: string; styles: ReturnType<t
   );
 }
 
-// Explore only renders two panes (left + the first "right"). Adding a new
-// pane on every click would silently stack entries in the URL — only the
-// second-in-order is shown. So we keep the first pane (the trace view) and
-// always overwrite the second pane with the new correlation query.
-function openSplitPane(dsUid: string, queries: Record<string, unknown>[]) {
-  const search = locationService.getSearch();
-  const dsSettings = getDataSourceSrv().getInstanceSettings(dsUid);
-  const queriesWithDs = queries.map((q) => ({
-    ...q,
-    datasource: { uid: dsUid, type: dsSettings?.type ?? '' },
-  }));
-
-  const panesRaw = search.get('panes');
-  if (panesRaw) {
-    try {
-      const panes = JSON.parse(decodeURIComponent(panesRaw));
-      const ids = Object.keys(panes);
-      const firstId = ids[0];
-      // Drop every extra pane and re-create a single companion pane with the
-      // new query so clicking Metrics after Logs (or vice versa) replaces
-      // instead of stacking.
-      const companionId = Math.random().toString(36).slice(2, 10);
-      const next: Record<string, unknown> = {};
-      if (firstId) {
-        next[firstId] = panes[firstId];
-      }
-      next[companionId] = { datasource: dsUid, queries: queriesWithDs };
-      locationService.push({
-        search: '?' + new URLSearchParams({
-          ...Object.fromEntries(search.entries()),
-          panes: JSON.stringify(next),
-        }).toString(),
-      });
-      return;
-    } catch {
-      /* fall through */
-    }
-  }
-
-  // Legacy Explore URL (`left` + `right`) — just overwrite `right`.
-  const right = JSON.stringify({ datasource: dsUid, queries: queriesWithDs });
-  locationService.push({
-    search: '?' + new URLSearchParams({
-      ...Object.fromEntries(search.entries()),
-      right,
-    }).toString(),
-  });
-}
-
 export function SpanDetails({ trace, span, onClose, traceToLogs, traceToMetrics }: SpanDetailsProps) {
   const styles = useStyles2(getStyles);
   const [tab, setTab] = useState<Tab>('fields');
+  const [fieldSearch, setFieldSearch] = useState('');
 
-  // Resolve ${__span.X} placeholders. Accepts variants (service/service_name/
-  // service.name, traceId/trace_id/trace.id, etc.) and looks up span tags +
-  // process resource attributes uniformly.
-  const resolveTemplate = useCallback(
-    (template: string): string => {
-      if (!span) {
-        return template;
-      }
-      return template.replace(/\$\{__span\.([\w.]+)\}/g, (_, name: string) => {
-        if (name.startsWith('tags.')) {
-          return resolveSpanField(trace, span, name.slice('tags.'.length));
-        }
-        return resolveSpanField(trace, span, name);
-      });
-    },
-    [span, trace]
+  // Grouped by namespace and searchable: a span can carry dozens of
+  // attributes, and a flat list of them is unreadable.
+  const fieldGroups = useMemo(
+    () => groupSpanFields(span?.tags ?? [], fieldSearch),
+    [span?.tags, fieldSearch]
   );
 
+  const copyValue = useCallback((value: string) => {
+    navigator.clipboard?.writeText(value).catch(() => {});
+  }, []);
+
   const handleLogsClick = useCallback(() => {
-    if (!traceToLogs?.datasourceUid || !span) {
-      return;
+    if (span) {
+      openLogsForSpan(traceToLogs, trace, span);
     }
-    const tpl = (traceToLogs.query && traceToLogs.query.trim()) || DEFAULT_TRACE_TO_LOGS_QUERY;
-    const expr = resolveTemplate(tpl);
-    openSplitPane(traceToLogs.datasourceUid, [
-      { refId: 'A', expr, queryType: 'logsql-logs' },
-    ]);
-  }, [traceToLogs, span, resolveTemplate]);
+  }, [traceToLogs, trace, span]);
 
   const handleMetricsClick = useCallback(
     (query: string) => {
-      if (!traceToMetrics?.datasourceUid || !span || !query.trim()) {
-        return;
+      if (span) {
+        openMetricsQueryForSpan(traceToMetrics, trace, span, query);
       }
-      openSplitPane(traceToMetrics.datasourceUid, [
-        { refId: 'A', expr: resolveTemplate(query) },
-      ]);
     },
-    [traceToMetrics, span, resolveTemplate]
+    [traceToMetrics, trace, span]
   );
 
-  // Build a bare MetricsQL selector from configured label mappings. Used as
-  // the default Metrics button query when no named queries are set.
   const handleAutoMetricsClick = useCallback(() => {
-    if (!traceToMetrics?.datasourceUid || !span) {
-      return;
+    if (span) {
+      openAutoMetricsForSpan(traceToMetrics, trace, span);
     }
-    const mappings = traceToMetrics.labelMappings ?? [];
-    const parts = mappings
-      .map((m) => {
-        if (!m.metricLabel || !m.spanField) {
-          return null;
-        }
-        const value = m.spanField.startsWith('tags.')
-          ? resolveSpanField(trace, span, m.spanField.slice('tags.'.length))
-          : resolveSpanField(trace, span, m.spanField);
-        if (!value) {
-          return null;
-        }
-        return `${m.metricLabel}="${escapeMetricsQLValue(value)}"`;
-      })
-      .filter((s): s is string => s !== null);
+  }, [traceToMetrics, trace, span]);
 
-    if (!parts.length) {
-      return;
-    }
-    openSplitPane(traceToMetrics.datasourceUid, [
-      { refId: 'A', expr: `{${parts.join(', ')}}` },
-    ]);
-  }, [traceToMetrics, span, trace]);
-
-  if (!span) return null;
+  if (!span) {return null;}
 
   const serviceName = span.processID && trace?.processes[span.processID]?.serviceName;
   const hasLogs = !!traceToLogs?.datasourceUid;
@@ -424,7 +309,7 @@ export function SpanDetails({ trace, span, onClose, traceToLogs, traceToMetrics 
           tooltip: q.query,
         });
       }
-    } else if ((traceToMetrics.labelMappings ?? []).length > 0) {
+    } else if (buildAutoMetricsSelector(traceToMetrics, trace, span)) {
       metricButtons.push({
         name: 'Metrics',
         onClick: handleAutoMetricsClick,
@@ -509,22 +394,49 @@ export function SpanDetails({ trace, span, onClose, traceToLogs, traceToMetrics 
         )}
 
         {tab === 'fields' && (
-          <table className={styles.table}>
-            <thead>
-              <tr>
-                <th className={styles.th}>Field</th>
-                <th className={styles.th}>Value</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(span.tags ?? []).map((tag) => (
-                <tr key={tag.key}>
-                  <td className={styles.tdKey}>{tag.key}</td>
-                  <ExpandableCell value={String(tag.value ?? '')} styles={styles} />
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <>
+            <Input
+              value={fieldSearch}
+              onChange={(e) => setFieldSearch(e.currentTarget.value)}
+              placeholder="Filter fields…"
+              aria-label="Filter fields"
+              prefix={<Icon name="search" />}
+            />
+
+            {fieldGroups.length === 0 ? (
+              <p className={styles.noFields}>No fields match this filter.</p>
+            ) : (
+              fieldGroups.map((group) => (
+                <div key={group.prefix}>
+                  <div className={styles.fieldGroupHeader}>{group.prefix}</div>
+                  <table className={styles.table}>
+                    <thead>
+                      <tr>
+                        <th className={styles.th}>Field</th>
+                        <th className={styles.th}>Value</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {group.fields.map((tag) => (
+                        <tr key={tag.key}>
+                          <td className={styles.tdKey}>
+                            {tag.key}
+                            <IconButton
+                              name="copy"
+                              size="sm"
+                              tooltip={`Copy ${tag.key}`}
+                              onClick={() => copyValue(String(tag.value ?? ''))}
+                            />
+                          </td>
+                          <ExpandableCell value={String(tag.value ?? '')} styles={styles} />
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ))
+            )}
+          </>
         )}
 
         {tab === 'logs' && (

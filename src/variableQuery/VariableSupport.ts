@@ -24,7 +24,12 @@ export class VariableSupport extends CustomVariableSupport<DataSource, VariableQ
       field: getTemplateSrv().replace(query.field ?? '', request.scopedVars),
       query: getTemplateSrv().replace(query.query ?? '', request.scopedVars),
     };
-    const promise = this.execute(interpolated);
+    // Unscoped, these metadata lookups scan the whole retention window and
+    // time out on a busy source; the request already carries the range.
+    const promise = this.execute(interpolated, {
+      start: request.range?.from.toISOString(),
+      end: request.range?.to.toISOString(),
+    });
     return from(promise).pipe(
       map((values) => ({
         data: values,
@@ -32,9 +37,12 @@ export class VariableSupport extends CustomVariableSupport<DataSource, VariableQ
     );
   }
 
-  private async execute(query: VariableQuery): Promise<MetricFindValue[]> {
+  private async execute(
+    query: VariableQuery,
+    range: { start?: string; end?: string }
+  ): Promise<MetricFindValue[]> {
     if (!query.type || query.type === 'fieldName') {
-      const names = await this.datasource.getFieldNames(undefined, query.query, query.limit);
+      const names = await this.datasource.getFieldNames(undefined, query.query, query.limit, range);
       return names.map((n) => ({ text: n }));
     }
 
@@ -43,7 +51,13 @@ export class VariableSupport extends CustomVariableSupport<DataSource, VariableQ
       if (!field) {
         return [];
       }
-      const values = await this.datasource.getFieldValues(field, query.limit ?? 100, undefined, query.query);
+      const values = await this.datasource.getFieldValues(
+        field,
+        query.limit ?? 100,
+        undefined,
+        query.query,
+        range
+      );
       return values.map((v) => ({ text: v }));
     }
 

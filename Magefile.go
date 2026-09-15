@@ -11,7 +11,7 @@ import (
 
 func init() {
 	build.SetBeforeBuildCallback(func(cfg build.Config) (build.Config, error) {
-		cfg.OutputBinaryPath = "plugins/victoriatraces-datasource"
+		cfg.OutputBinaryPath = "plugins/victoriametrics-traces-datasource"
 		return cfg, nil
 	})
 }
