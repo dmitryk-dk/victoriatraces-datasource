@@ -6,6 +6,10 @@ on:
       - 'v*.*.*'
   workflow_dispatch:
     inputs:
+      tag:
+        description: 'Tag to release, e.g. v1.0.0. Leave empty for a build-only dry run.'
+        required: false
+        type: string
       skip_vuln_scan:
         description: 'Skip OSV vulnerability scan'
         required: false
@@ -83,12 +87,30 @@ jobs:
 
       # Resolve version from the tag (v1.2.3 → 1.2.3) and inject it into
       # plugin.json + package.json so the published archive matches.
+      # A tag push carries the tag in GITHUB_REF_NAME; a manual run does not,
+      # and taking the ref name regardless is what stamped plugin.json with
+      # "main" and asked the release API to publish a branch as a tag.
       - name: Resolve version
         id: version
         run: |
-          tag="${GITHUB_REF_NAME#v}"
-          echo "version=$tag" >> "$GITHUB_OUTPUT"
-          echo "Releasing version $tag"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            tag="${GITHUB_REF_NAME}"
+          else
+            tag="${{ inputs.tag }}"
+          fi
+          if [ -n "$tag" ] && ! printf '%s' "$tag" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::tag '$tag' is not vMAJOR.MINOR.PATCH"
+            exit 1
+          fi
+          if [ -n "$tag" ]; then
+            echo "Releasing $tag"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No tag given — building and scanning only, nothing will be published"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
 
       - name: Patch plugin.json version
         run: |
@@ -150,8 +172,12 @@ jobs:
       #   continue-on-error: true # surface findings without blocking release
 
       - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
+        if: steps.version.outputs.publish == 'true'
+        # Pinned: a mutable tag on an action holding contents: write is the
+        # softest part of this pipeline.
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
+          tag_name: ${{ steps.version.outputs.tag }}
           files: |
             release/victoriametrics-traces-datasource-${{ steps.version.outputs.version }}.zip
             release/victoriametrics-traces-datasource-${{ steps.version.outputs.version }}.tar.gz
