@@ -76,7 +76,7 @@
     "js-cookie": "^3.0.7"
   },
   "dependencies": {
-    "@dagrejs/dagre": "^1.1.4",
+    "@dagrejs/dagre": "^3.1.1",
     "@grafana/data": "^12.4.1",
     "@grafana/runtime": "^12.4.1",
     "@grafana/schema": "^12.4.1",
