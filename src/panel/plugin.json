@@ -3,7 +3,7 @@
   "name": "VictoriaTraces",
   "id": "victoriametrics-traces-panel",
   "info": {
-    "version": "1.0.0",
+    "version": "0.1.0",
     "description": "Custom traces visualization panel for VictoriaTraces",
     "author": {
       "name": "dmitryk-dk"

@@ -3,7 +3,7 @@
   "name": "VictoriaTraces charts",
   "id": "victoriametrics-traces-charts-panel",
   "info": {
-    "version": "1.0.0",
+    "version": "0.1.0",
     "description": "Heatmap, scatter, operations and service map for VictoriaTraces",
     "author": {
       "name": "dmitryk-dk"

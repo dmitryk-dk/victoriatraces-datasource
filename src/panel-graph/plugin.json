@@ -3,7 +3,7 @@
   "name": "Node graph",
   "id": "victoriametrics-traces-nodegraph-panel",
   "info": {
-    "version": "1.0.0",
+    "version": "0.1.0",
     "description": "Service dependency graph panel for VictoriaTraces",
     "author": {
       "name": "dmitryk-dk"

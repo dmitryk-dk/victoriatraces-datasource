@@ -1,6 +1,6 @@
 {
   "name": "victoriametrics-traces-datasource",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "VictoriaTraces datasource plugin for Grafana",
   "scripts": {
     "build": "webpack -c ./webpack.config.ts --env production",
