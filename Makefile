@@ -11,6 +11,13 @@ endif
 PLUGIN_ID=victoriametrics-traces-datasource
 APP_NAME=victoriatraces_backend_plugin
 
+PANEL_IDS= \
+	victoriametrics-traces-panel \
+	victoriametrics-traces-nodegraph-panel \
+	victoriametrics-traces-charts-panel
+
+RELEASE_IDS=$(PLUGIN_ID) $(PANEL_IDS)
+
 GO_BUILDINFO = -X 'github.com/grafana/grafana-plugin-sdk-go/build.buildInfoJSON={\"time\":${DATEINFO_TAG},\"id\":\"victoriametrics-traces-datasource\",\"version\":\"${BUILDINFO_TAG}\",\"branch\":\"${PKG_TAG}\"}'
 
 .PHONY: $(MAKECMDGOALS)
@@ -44,8 +51,8 @@ vt-plugin-pack: vt-plugin-build
 	mkdir -p release && \
 	$(eval PACKAGE_NAME := $(PLUGIN_ID)-$(PKG_TAG)) \
 	cd plugins/ && \
-	tar -czf ../release/$(PACKAGE_NAME).tar.gz ./$(PLUGIN_ID) && \
-	zip -q -r ../release/$(PACKAGE_NAME).zip ./$(PLUGIN_ID) && \
+	tar -czf ../release/$(PACKAGE_NAME).tar.gz $(addprefix ./,$(RELEASE_IDS)) && \
+	zip -q -r ../release/$(PACKAGE_NAME).zip $(addprefix ./,$(RELEASE_IDS)) && \
 	cd - && \
 	sha1sum release/$(PACKAGE_NAME).zip > release/$(PACKAGE_NAME)_checksums_zip.txt && \
 	sha1sum release/$(PACKAGE_NAME).tar.gz > release/$(PACKAGE_NAME)_checksums_tar.gz.txt

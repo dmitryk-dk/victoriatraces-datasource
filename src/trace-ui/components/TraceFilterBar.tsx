@@ -164,7 +164,7 @@ export function TraceFilterBar({
 
   return (
     <div className={styles.bar}>
-      <div className={styles.row}>
+      <div className={styles.row} data-testid="trace-filter-row">
         {leading}
         <MultiSelect
           options={serviceOptions}

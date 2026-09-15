@@ -300,3 +300,51 @@ func TestFramesCarryTheExecutedQuery(t *testing.T) {
 		assert.Equal(t, json.RawMessage(raw), custom["query"], "frame %q", frame.Name)
 	}
 }
+
+// A span stored by VictoriaTraces carries its failure as otel.status_code=2,
+// not as the `error` tag the Jaeger API synthesises. Both spellings reach
+// these frames — trace-by-ID rebuilds spans from LogsQL — so both have to
+// count, or a failing trace draws an all-green node graph.
+func TestSpanHasErrorOtelStatusCode(t *testing.T) {
+	span := JaegerSpan{
+		SpanID: "span1",
+		Tags: []JaegerKeyValue{
+			{Key: "otel.status_code", Type: "string", Value: "2"},
+		},
+	}
+
+	assert.True(t, spanHasError(span))
+}
+
+func TestSpanHasErrorOtelStatusCodeOk(t *testing.T) {
+	span := JaegerSpan{
+		SpanID: "span1",
+		Tags: []JaegerKeyValue{
+			{Key: "otel.status_code", Type: "string", Value: "1"},
+		},
+	}
+
+	assert.False(t, spanHasError(span))
+}
+
+func TestTraceToNodeGraphFramesCountsOtelErrors(t *testing.T) {
+	trace := JaegerTrace{
+		TraceID:   "abc123",
+		Processes: map[string]JaegerProcess{"frontend": {ServiceName: "frontend"}},
+		Spans: []JaegerSpan{{
+			TraceID:    "abc123",
+			SpanID:     "span1",
+			ProcessID:  "frontend",
+			References: []JaegerReference{},
+			Tags: []JaegerKeyValue{
+				{Key: "otel.status_code", Type: "string", Value: "2"},
+			},
+		}},
+	}
+
+	nodes, _ := TraceToNodeGraphFrames([]JaegerTrace{trace})
+
+	errField, _ := nodes.FieldByName("arc__errors")
+	require.NotNil(t, errField)
+	assert.Equal(t, float64(1), errField.At(0).(float64))
+}

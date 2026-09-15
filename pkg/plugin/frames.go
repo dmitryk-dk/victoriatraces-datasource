@@ -410,20 +410,46 @@ func serviceForSpan(trace JaegerTrace, spanID string) string {
 	return ""
 }
 
-// spanHasError returns true if a span has error=true in its tags.
+// spanHasError reports whether a span failed.
+//
+// Two spellings reach here. The Jaeger API synthesises `error=true`; spans
+// rebuilt from LogsQL (trace-by-ID) carry the stored OTLP status instead, as
+// `otel.status_code` — 0 unset, 1 ok, 2 error. Matching only the first left a
+// failing trace drawing an all-green node graph.
 func spanHasError(span JaegerSpan) bool {
 	for _, tag := range span.Tags {
-		if tag.Key == "error" {
+		switch tag.Key {
+		case "error":
 			switch v := tag.Value.(type) {
 			case bool:
-				return v
+				if v {
+					return true
+				}
 			case string:
-				return v == "true"
+				if v == "true" {
+					return true
+				}
+			}
+		case "otel.status_code":
+			switch v := tag.Value.(type) {
+			case string:
+				if v == otelStatusCodeError {
+					return true
+				}
+			case float64:
+				// A JSON-decoded tag arrives as a number rather than a string.
+				if int(v) == 2 {
+					return true
+				}
 			}
 		}
 	}
 	return false
 }
+
+// otelStatusCodeError is the OTLP status for a failed span, as VictoriaTraces
+// stores it.
+const otelStatusCodeError = "2"
 
 // nodeGraphStats holds per-service aggregated stats for the node graph.
 type nodeGraphStats struct {

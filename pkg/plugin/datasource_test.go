@@ -455,3 +455,93 @@ func TestCallResource(t *testing.T) {
 		})
 	}
 }
+
+// A URL pasted with a trailing slash is the common case — Grafana stores it
+// verbatim — and joining it to a path yields "//health", which VictoriaTraces
+// rejects with "unsupported path requested". Trim it once, at construction.
+func TestNewDatasourceTrimsTrailingSlashFromURL(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		url  string
+		want string
+	}{
+		{name: "trailing slash", url: "http://vt:10428/", want: "http://vt:10428"},
+		{name: "repeated slashes", url: "http://vt:10428///", want: "http://vt:10428"},
+		{name: "no trailing slash", url: "http://vt:10428", want: "http://vt:10428"},
+		{name: "path prefix", url: "http://vt:10428/prefix/", want: "http://vt:10428/prefix"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			instance, err := NewDatasource(context.Background(), backend.DataSourceInstanceSettings{
+				URL:      tc.url,
+				JSONData: json.RawMessage(`{}`),
+			})
+			require.NoError(t, err)
+
+			ds, ok := instance.(*Datasource)
+			require.True(t, ok)
+			client, ok := ds.client.(*Client)
+			require.True(t, ok)
+
+			assert.Equal(t, tc.want, client.baseURL)
+		})
+	}
+}
+
+// The tail client talks to the same upstream, so it needs the same trimming —
+// a live-tail request would otherwise ask for "//select/logsql/tail".
+func TestNewDatasourceTrimsTrailingSlashForTailClient(t *testing.T) {
+	instance, err := NewDatasource(context.Background(), backend.DataSourceInstanceSettings{
+		URL:      "http://vt:10428/",
+		JSONData: json.RawMessage(`{}`),
+	})
+	require.NoError(t, err)
+
+	ds := instance.(*Datasource)
+	tail, ok := ds.tailClient.(*Client)
+	require.True(t, ok)
+
+	assert.Equal(t, "http://vt:10428", tail.baseURL)
+}
+
+// Trace search reaches /select/tempo/api/search, which VictoriaTraces only
+// grew in v0.8.0. An older instance answers "unsupported path requested",
+// which as a bare 500 reads like the datasource is broken. Name the cause.
+func TestResourceSearchOnUpstreamWithoutTempoAPI(t *testing.T) {
+	ds := &Datasource{client: &mockClient{err: &APIError{
+		Status:  http.StatusBadRequest,
+		Message: `unsupported path requested: "/select/tempo/api/search"`,
+	}}}
+	sender := &mockSender{}
+
+	err := ds.CallResource(context.Background(), &backend.CallResourceRequest{Path: "search"}, sender)
+	require.NoError(t, err)
+	require.Len(t, sender.responses, 1)
+
+	assert.Equal(t, http.StatusNotImplemented, sender.responses[0].Status)
+
+	var body map[string]string
+	require.NoError(t, json.Unmarshal(sender.responses[0].Body, &body))
+	assert.Contains(t, body["error"], "v0.8.0")
+	assert.Contains(t, body["error"], "/select/tempo/api/search")
+}
+
+// An upstream that has the endpoint but failed for another reason must still
+// report that reason, not the version advice.
+func TestResourceSearchPassesOtherErrorsThrough(t *testing.T) {
+	ds := &Datasource{client: &mockClient{err: &APIError{
+		Status:  http.StatusInternalServerError,
+		Message: "storage is unavailable",
+	}}}
+	sender := &mockSender{}
+
+	err := ds.CallResource(context.Background(), &backend.CallResourceRequest{Path: "search"}, sender)
+	require.NoError(t, err)
+	require.Len(t, sender.responses, 1)
+
+	assert.Equal(t, http.StatusInternalServerError, sender.responses[0].Status)
+
+	var body map[string]string
+	require.NoError(t, json.Unmarshal(sender.responses[0].Body, &body))
+	assert.Contains(t, body["error"], "storage is unavailable")
+	assert.NotContains(t, body["error"], "v0.8.0")
+}

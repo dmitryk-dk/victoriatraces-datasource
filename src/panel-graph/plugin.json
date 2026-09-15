@@ -11,10 +11,40 @@
     "logos": {
       "small": "img/logo.svg",
       "large": "img/logo.svg"
-    }
+    },
+    "keywords": [
+      "victoriatraces",
+      "victoriametrics",
+      "tracing",
+      "traces",
+      "service map",
+      "node graph"
+    ],
+    "links": [
+      {
+        "name": "GitHub",
+        "url": "https://github.com/dmitryk-dk/victoriatraces-datasource"
+      },
+      {
+        "name": "Issues",
+        "url": "https://github.com/dmitryk-dk/victoriatraces-datasource/issues"
+      },
+      {
+        "name": "License",
+        "url": "https://github.com/dmitryk-dk/victoriatraces-datasource/blob/main/LICENSE"
+      },
+      {
+        "name": "Changelog",
+        "url": "https://github.com/dmitryk-dk/victoriatraces-datasource/blob/main/CHANGELOG.md"
+      },
+      {
+        "name": "VictoriaTraces",
+        "url": "https://docs.victoriametrics.com/victoriatraces/"
+      }
+    ],
+    "updated": "2026-06-06"
   },
   "dependencies": {
     "grafanaDependency": ">=12.3.0"
   }
 }
-

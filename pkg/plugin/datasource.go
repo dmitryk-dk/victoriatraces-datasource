@@ -100,6 +100,7 @@ func NewDatasource(ctx context.Context, settings backend.DataSourceInstanceSetti
 	if baseURL == "" {
 		baseURL = settings.URL
 	}
+	baseURL = strings.TrimRight(baseURL, "/")
 
 	opts, err := settings.HTTPClientOptions(ctx)
 	if err != nil {
@@ -361,6 +362,14 @@ func (d *Datasource) resourceSearch(ctx context.Context, qs url.Values, sender b
 		Limit: limit,
 	})
 	if err != nil {
+		if isUnsupportedUpstreamPath(err) {
+			return sendJSON(sender, http.StatusNotImplemented, map[string]string{
+				"error": fmt.Sprintf(
+					"trace search needs %s, which VictoriaTraces serves from v0.8.0 onwards; this instance does not have it (%v)",
+					tempoSearchPath, err,
+				),
+			})
+		}
 		return sendJSON(sender, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
 

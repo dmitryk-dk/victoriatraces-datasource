@@ -171,6 +171,29 @@ type TempoSearchParams struct {
 	Limit int
 }
 
+// tempoSearchPath is the Tempo-compatible search endpoint. VictoriaTraces
+// serves it from v0.8.0; earlier versions answer "unsupported path requested",
+// which callers translate into version advice rather than a bare failure.
+const tempoSearchPath = "/select/tempo/api/search"
+
+// unsupportedPathMarker is how VictoriaTraces reports a route it does not
+// serve. The status alone cannot be trusted for this — it is a 400, the same
+// as a genuinely malformed query.
+const unsupportedPathMarker = "unsupported path requested"
+
+// isUnsupportedUpstreamPath reports whether err is the upstream saying it has
+// no such endpoint, rather than that the request was wrong.
+func isUnsupportedUpstreamPath(err error) bool {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	if apiErr.Status == http.StatusNotFound {
+		return true
+	}
+	return strings.Contains(apiErr.Message, unsupportedPathMarker)
+}
+
 // matchAllTracesQuery is the match-everything filter accepted by the Tempo
 // search endpoint. It rejects both an empty query ("missing query") and the
 // LogsQL wildcard "*" ("compound token cannot start with *").
@@ -197,7 +220,7 @@ func (c *Client) SearchTracesTempo(ctx context.Context, p TempoSearchParams) (*T
 	}
 
 	var result TempoSearchResponse
-	if err := c.get(ctx, "/select/tempo/api/search", params, &result); err != nil {
+	if err := c.get(ctx, tempoSearchPath, params, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
