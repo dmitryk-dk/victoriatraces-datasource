@@ -201,7 +201,7 @@ function aggregateFields(
  * Mirrors VictoriaLogs' getLogVolumeFieldConfig.
  */
 function getLogVolumeFieldConfig(level: LogLevel): FieldConfig {
-  const name = LogLevel[level] ?? level;
+  const name = level;
   const color = LOG_LEVEL_COLOR[name] ?? LOG_LEVEL_COLOR[LogLevel.unknown];
   return {
     displayNameFromDS: name,
