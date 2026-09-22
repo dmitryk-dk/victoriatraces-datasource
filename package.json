@@ -80,7 +80,7 @@
     "@grafana/schema": "^13.2.2",
     "@grafana/ui": "^13.2.2",
     "@tanstack/react-virtual": "^3.14.13",
-    "@xyflow/react": "^12.6.0",
+    "@xyflow/react": "^12.11.6",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "recharts": "^2.15.3",
