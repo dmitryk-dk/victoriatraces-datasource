@@ -9,6 +9,9 @@ updates:
     directory: /
     schedule:
       interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Europe/Berlin
     open-pull-requests-limit: 5
     commit-message:
       prefix: "deps(go)"
@@ -17,6 +20,9 @@ updates:
     directory: /
     schedule:
       interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Europe/Berlin
     open-pull-requests-limit: 5
     commit-message:
       prefix: "deps(npm)"
@@ -31,5 +37,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Europe/Berlin
     commit-message:
       prefix: "deps(actions)"
