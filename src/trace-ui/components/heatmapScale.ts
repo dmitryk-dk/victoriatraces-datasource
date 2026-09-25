@@ -41,21 +41,22 @@ export function makePalette(from: string, to: string): string[] {
   );
 }
 
+// Lowest step a populated cell may take. Step 0 is the empty-cell colour, and
+// the first few steps are barely distinguishable from it.
+export const MIN_VISIBLE_STEP = 3;
+
 /**
- * Picks the palette step for a count, ramping linearly across the range the
- * populated cells actually span. Scaling from the
- * quietest cell rather than from zero uses the whole ramp on a grid whose
- * counts are all large.
+ * Picks the palette step for a count, relative to the busiest cell — the same
+ * 0 → max the legend shows. Any populated cell lands at MIN_VISIBLE_STEP or
+ * above, so a lone trace, or the quietest cell on a busy grid, never takes
+ * the empty-cell colour.
  */
-export function paletteIndex(count: number, minCount: number, maxCount: number): number {
+export function paletteIndex(count: number, maxCount: number): number {
   if (count <= 0 || maxCount <= 0) {
     return 0;
   }
-  const range = maxCount - minCount;
-  if (range === 0) {
-    return 0;
-  }
-  return Math.min(PALETTE_STEPS - 1, Math.floor((PALETTE_STEPS * (count - minCount)) / range));
+  const step = Math.ceil(((PALETTE_STEPS - 1) * Math.min(count, maxCount)) / maxCount);
+  return Math.max(MIN_VISIBLE_STEP, step);
 }
 
 // Tick increments that land on whole seconds, minutes and hours rather than

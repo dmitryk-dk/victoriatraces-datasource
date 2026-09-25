@@ -2,6 +2,7 @@ import {
   formatClock,
   interpolateColor,
   makePalette,
+  MIN_VISIBLE_STEP,
   paletteIndex,
   PALETTE_STEPS,
   durationAxisTicks,
@@ -34,23 +35,28 @@ describe('makePalette', () => {
 
 describe('paletteIndex', () => {
   it('puts the busiest cell at the top of the ramp', () => {
-    expect(paletteIndex(10, 1, 10)).toBe(PALETTE_STEPS - 1);
+    expect(paletteIndex(10, 10)).toBe(PALETTE_STEPS - 1);
   });
 
-  it('scales linearly between the least and most busy cells', () => {
-    // The ramp is linear across the populated range; the quietest cell sits
-    // at the bottom of the ramp rather than in the middle of it.
-    expect(paletteIndex(1, 1, 100)).toBe(0);
-    expect(paletteIndex(50, 1, 100)).toBe(Math.floor((PALETTE_STEPS * 49) / 99));
+  it('puts a lone populated cell at the top of the ramp', () => {
+    // A single trace is the busiest cell on its grid; it used to share the
+    // empty-cell colour and vanish.
+    expect(paletteIndex(1, 1)).toBe(PALETTE_STEPS - 1);
+    expect(paletteIndex(7, 7)).toBe(PALETTE_STEPS - 1);
   });
 
-  it('puts a grid of equal counts at the bottom of the ramp', () => {
-    expect(paletteIndex(7, 7, 7)).toBe(0);
+  it('scales relative to the busiest cell, matching the 0 → max legend', () => {
+    expect(paletteIndex(50, 100)).toBe(Math.ceil(((PALETTE_STEPS - 1) * 50) / 100));
+  });
+
+  it('keeps the quietest populated cell distinguishable from an empty one', () => {
+    expect(paletteIndex(1, 1000)).toBe(MIN_VISIBLE_STEP);
+    expect(MIN_VISIBLE_STEP).toBeGreaterThan(0);
   });
 
   it('handles empty and degenerate input', () => {
-    expect(paletteIndex(0, 1, 10)).toBe(0);
-    expect(paletteIndex(5, 0, 0)).toBe(0);
+    expect(paletteIndex(0, 10)).toBe(0);
+    expect(paletteIndex(5, 0)).toBe(0);
   });
 });
 

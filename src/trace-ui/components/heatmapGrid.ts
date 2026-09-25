@@ -35,8 +35,7 @@ export interface HeatmapRow {
 
 export interface HeatmapLayout {
   rows: HeatmapRow[];
-  /** Extents over populated cells, for the colour scale. */
-  minCount: number;
+  /** Busiest populated cell, for the colour scale. */
   maxCount: number;
 }
 
@@ -55,7 +54,6 @@ const EDGE_EPSILON = 1e-6;
 export function heatmapRows(cells: readonly HeatmapCell[], yBins: number): HeatmapLayout {
   const byRow = new Map<number, Map<number, { count: number; errors: number }>>();
   let maxCount = 0;
-  let minCount = Number.POSITIVE_INFINITY;
 
   for (const cell of cells) {
     let row = byRow.get(cell.yi);
@@ -65,14 +63,13 @@ export function heatmapRows(cells: readonly HeatmapCell[], yBins: number): Heatm
     }
     row.set(cell.xi, { count: cell.count, errors: cell.errors });
     maxCount = Math.max(maxCount, cell.count);
-    minCount = Math.min(minCount, cell.count);
   }
 
   const rows: HeatmapRow[] = [];
   for (let yi = yBins - 1; yi >= 0; yi--) {
     rows.push({ yi, cells: byRow.get(yi) ?? new Map() });
   }
-  return { rows, minCount: Number.isFinite(minCount) ? minCount : 0, maxCount };
+  return { rows, maxCount };
 }
 
 /** Microsecond bounds of a duration bin; the outer bins are open-ended. */

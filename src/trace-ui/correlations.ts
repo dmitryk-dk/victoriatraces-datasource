@@ -66,6 +66,28 @@ export function resolveSpanTemplate(trace: Trace | undefined, span: TraceSpan, t
   );
 }
 
+// Padding around the trace window: logs and metrics about a request are often
+// written just before or after its spans.
+const CORRELATION_RANGE_PAD_MS = 5 * 60_000;
+
+/** Explore range covering the whole trace, padded; ms-epoch strings. */
+export function traceTimeRange(trace: Trace | undefined, span: TraceSpan): { from: string; to: string } {
+  const spans = trace?.spans?.length ? trace.spans : [span];
+  const start = Math.min(...spans.map((s) => s.startTime));
+  const end = Math.max(...spans.map((s) => s.startTime + s.duration));
+  return {
+    from: String(Math.floor(start - CORRELATION_RANGE_PAD_MS)),
+    to: String(Math.ceil(end + CORRELATION_RANGE_PAD_MS)),
+  };
+}
+
+// Raw-logs query type per target datasource. Each plugin names it differently;
+// an unknown one leaves VictoriaLogs' editor at "Type: unknown".
+const LOGS_QUERY_TYPE: Record<string, string> = {
+  'victoriametrics-logs-datasource': 'instant',
+  'victoriametrics-traces-datasource': 'logsql-logs',
+};
+
 /**
  * Opens a correlation query in Explore's companion pane.
  *
@@ -74,7 +96,11 @@ export function resolveSpanTemplate(trace: Trace | undefined, span: TraceSpan, t
  * view) is kept and the companion is always replaced, so clicking Metrics after
  * Logs swaps rather than accumulates.
  */
-export function openSplitPane(dsUid: string, queries: Array<Record<string, unknown>>): void {
+export function openSplitPane(
+  dsUid: string,
+  queries: Array<Record<string, unknown>>,
+  range?: { from: string; to: string }
+): void {
   const search = locationService.getSearch();
   const dsSettings = getDataSourceSrv().getInstanceSettings(dsUid);
   const queriesWithDs = queries.map((q) => ({
@@ -92,7 +118,7 @@ export function openSplitPane(dsUid: string, queries: Array<Record<string, unkno
       if (firstId) {
         next[firstId] = panes[firstId];
       }
-      next[companionId] = { datasource: dsUid, queries: queriesWithDs };
+      next[companionId] = { datasource: dsUid, queries: queriesWithDs, ...(range && { range }) };
       locationService.push({
         search:
           '?' +
@@ -108,7 +134,7 @@ export function openSplitPane(dsUid: string, queries: Array<Record<string, unkno
   }
 
   // Legacy Explore URL (`left` + `right`) — overwrite `right`.
-  const right = JSON.stringify({ datasource: dsUid, queries: queriesWithDs });
+  const right = JSON.stringify({ datasource: dsUid, queries: queriesWithDs, ...(range && { range }) });
   locationService.push({
     search:
       '?' +
@@ -129,9 +155,13 @@ export function openLogsForSpan(
     return;
   }
   const template = options.query?.trim() || DEFAULT_TRACE_TO_LOGS_QUERY;
-  openSplitPane(options.datasourceUid, [
-    { refId: 'A', expr: resolveSpanTemplate(trace, span, template), queryType: 'logsql-logs' },
-  ]);
+  const dsType = getDataSourceSrv().getInstanceSettings(options.datasourceUid)?.type ?? '';
+  const queryType = LOGS_QUERY_TYPE[dsType];
+  openSplitPane(
+    options.datasourceUid,
+    [{ refId: 'A', expr: resolveSpanTemplate(trace, span, template), ...(queryType && { queryType }) }],
+    traceTimeRange(trace, span)
+  );
 }
 
 /** Opens a named trace-to-metrics query for a span. */
@@ -144,9 +174,11 @@ export function openMetricsQueryForSpan(
   if (!options?.datasourceUid || !query.trim()) {
     return;
   }
-  openSplitPane(options.datasourceUid, [
-    { refId: 'A', expr: resolveSpanTemplate(trace, span, query) },
-  ]);
+  openSplitPane(
+    options.datasourceUid,
+    [{ refId: 'A', expr: resolveSpanTemplate(trace, span, query) }],
+    traceTimeRange(trace, span)
+  );
 }
 
 /**
@@ -182,6 +214,6 @@ export function openAutoMetricsForSpan(
 ): void {
   const expr = buildAutoMetricsSelector(options, trace, span);
   if (expr && options?.datasourceUid) {
-    openSplitPane(options.datasourceUid, [{ refId: 'A', expr }]);
+    openSplitPane(options.datasourceUid, [{ refId: 'A', expr }], traceTimeRange(trace, span));
   }
 }

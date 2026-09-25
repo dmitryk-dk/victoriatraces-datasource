@@ -48,9 +48,8 @@ describe('heatmapRows', () => {
     expect(row.cells.get(0)).toBeUndefined();
   });
 
-  it('reports the busiest and least busy populated cells', () => {
-    const { maxCount, minCount } = heatmapRows([cell(0, 1, 5), cell(1, 2, 40)], Y_BINS);
-    expect(minCount).toBe(5);
+  it('reports the busiest populated cell', () => {
+    const { maxCount } = heatmapRows([cell(0, 1, 5), cell(1, 2, 40)], Y_BINS);
     expect(maxCount).toBe(40);
   });
 });

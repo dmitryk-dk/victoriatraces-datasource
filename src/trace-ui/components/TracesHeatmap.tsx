@@ -91,7 +91,7 @@ export function TracesHeatmap({ data, selection, onSelectionChange }: Props) {
   const yBins = edgesNs.length + 1;
   const xCount = Math.max(data?.xCount ?? 0, 0);
 
-  const { rows, minCount, maxCount } = useMemo(() => heatmapRows(cells, yBins), [cells, yBins]);
+  const { rows, maxCount } = useMemo(() => heatmapRows(cells, yBins), [cells, yBins]);
 
   // Five labels up the band axis: one per band is unreadable.
   const durationTicks = useMemo(() => durationAxisTicks(edgesNs), [edgesNs]);
@@ -306,7 +306,7 @@ export function TracesHeatmap({ data, selection, onSelectionChange }: Props) {
                   >
                     <span
                       className={styles.cell}
-                      style={{ background: palette[paletteIndex(cell.count, minCount, maxCount)] }}
+                      style={{ background: palette[paletteIndex(cell.count, maxCount)] }}
                     />
                   </Tooltip>
                 );

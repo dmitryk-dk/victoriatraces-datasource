@@ -1,4 +1,4 @@
-import { locationService } from '@grafana/runtime';
+import { getDataSourceSrv, locationService } from '@grafana/runtime';
 
 import { buildTraceListQuery } from '../filters/logsql';
 import type { TraceFilter } from '../filters/types';
@@ -40,6 +40,35 @@ export function patchTarget(prev: any, next: any) {
   return { ...prev, ...next };
 }
 
+const PLUGIN_TYPE = 'victoriametrics-traces-datasource';
+
+/**
+ * Whether a query in a pane belongs to this datasource.
+ *
+ * Explore can hold a companion pane — trace to logs opens VictoriaLogs next to
+ * the traces — and a mixed pane can hold other datasources' queries. An edit
+ * made in our panels must not reach those. A query that names no datasource
+ * takes the pane's; with neither known it is assumed ours, as a lone pane is.
+ */
+function isOwnQuery(query: any, paneDatasource: unknown): boolean {
+  const ds = query?.datasource;
+  if (ds?.type) {
+    return ds.type === PLUGIN_TYPE;
+  }
+  const uid = ds?.uid ?? (typeof ds === 'string' ? ds : undefined) ?? paneDatasource;
+  if (typeof uid !== 'string') {
+    return true;
+  }
+  const type = getDataSourceSrv().getInstanceSettings(uid)?.type;
+  return type === undefined || type === PLUGIN_TYPE;
+}
+
+function rebuildOwn(queries: unknown, paneDatasource: unknown, rebuild: (prev: any) => any) {
+  return Array.isArray(queries)
+    ? queries.map((q) => (isOwnQuery(q, paneDatasource) ? rebuild(q) : q))
+    : queries;
+}
+
 export function navigateExplore(rebuild: (prev: any) => any) {
   const search = locationService.getSearch();
 
@@ -50,7 +79,7 @@ export function navigateExplore(rebuild: (prev: any) => any) {
       const updated = Object.fromEntries(
         Object.entries(panes as Record<string, any>).map(([id, pane]) => [
           id,
-          { ...pane, queries: Array.isArray(pane.queries) ? pane.queries.map(rebuild) : pane.queries },
+          { ...pane, queries: rebuildOwn(pane.queries, pane.datasource, rebuild) },
         ])
       );
       locationService.push({
@@ -70,7 +99,7 @@ export function navigateExplore(rebuild: (prev: any) => any) {
     try {
       const left = JSON.parse(decodeURIComponent(leftRaw));
       if (Array.isArray(left.queries)) {
-        left.queries = left.queries.map(rebuild);
+        left.queries = rebuildOwn(left.queries, left.datasource, rebuild);
         locationService.push({
           search: '?' + new URLSearchParams({
             ...Object.fromEntries(search.entries()),

@@ -1,9 +1,17 @@
 import { locationService } from '@grafana/runtime';
 
-import { addFiltersToQuery, navigateExplore, rebuildTarget } from './exploreQuery';
+import { addFiltersToQuery, navigateExplore, patchTarget, rebuildTarget } from './exploreQuery';
 
 jest.mock('@grafana/runtime', () => ({
   locationService: { getSearch: jest.fn(), push: jest.fn() },
+  getDataSourceSrv: () => ({
+    getInstanceSettings: (uid: string) =>
+      ({
+        ds: { type: 'victoriametrics-traces-datasource' },
+        u: { type: 'victoriametrics-traces-datasource' },
+        vlogs: { type: 'victoriametrics-logs-datasource' },
+      })[uid],
+  }),
 }));
 
 const mockedLocation = locationService as unknown as {
@@ -50,6 +58,48 @@ describe('navigateExplore', () => {
 
     const [{ search }] = mockedLocation.push.mock.calls[0];
     expect(new URLSearchParams(search).get('schemaVersion')).toBe('1');
+  });
+
+  it('leaves a companion logs pane alone', () => {
+    // Trace to logs opens VictoriaLogs next to the traces; a facet ticked
+    // afterwards used to rewrite the logs query with trace fields.
+    const logsQuery = { refId: 'A', expr: 'trace_id:=abc', queryType: 'instant' };
+    mockedLocation.getSearch.mockReturnValue(
+      new URLSearchParams({
+        panes: JSON.stringify({
+          abc: { datasource: 'ds', queries: [{ refId: 'A', queryType: 'traceList' }] },
+          logs: { datasource: 'vlogs', queries: [logsQuery] },
+        }),
+      })
+    );
+
+    navigateExplore((q) => patchTarget(q, { services: ['checkout'] }));
+
+    const [{ search }] = mockedLocation.push.mock.calls[0];
+    const panes = JSON.parse(new URLSearchParams(search).get('panes')!);
+    expect(panes.abc.queries[0]).toMatchObject({ services: ['checkout'] });
+    expect(panes.logs.queries[0]).toEqual(logsQuery);
+  });
+
+  it('rewrites only our queries in a mixed pane', () => {
+    const lokiQuery = { refId: 'B', datasource: { uid: 'loki', type: 'loki' }, expr: '{app="x"}' };
+    mockedLocation.getSearch.mockReturnValue(
+      new URLSearchParams({
+        panes: JSON.stringify({
+          abc: {
+            datasource: '-- Mixed --',
+            queries: [{ refId: 'A', datasource: { uid: 'u', type: 'victoriametrics-traces-datasource' } }, lokiQuery],
+          },
+        }),
+      })
+    );
+
+    navigateExplore((q) => patchTarget(q, { services: ['checkout'] }));
+
+    const [{ search }] = mockedLocation.push.mock.calls[0];
+    const [ours, loki] = JSON.parse(new URLSearchParams(search).get('panes')!).abc.queries;
+    expect(ours).toMatchObject({ services: ['checkout'] });
+    expect(loki).toEqual(lokiQuery);
   });
 });
 

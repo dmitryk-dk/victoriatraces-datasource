@@ -102,6 +102,14 @@ func TestTracesToFrame(t *testing.T) {
 			},
 		},
 		{
+			name:   "frame carries the datasource uid",
+			traces: []JaegerTrace{sampleTrace()},
+			check: func(t *testing.T, f *data.Frame) {
+				require.NotNil(t, f.Meta)
+				assert.Equal(t, map[string]interface{}{"datasourceUid": "ds-1"}, f.Meta.Custom)
+			},
+		},
+		{
 			name:   "empty input yields empty frame",
 			traces: nil,
 			check: func(t *testing.T, f *data.Frame) {
@@ -118,7 +126,7 @@ func TestTracesToFrame(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			frame := TracesToFrame(tc.traces)
+			frame := TracesToFrame(tc.traces, "ds-1")
 			require.NotNil(t, frame)
 			tc.check(t, frame)
 		})

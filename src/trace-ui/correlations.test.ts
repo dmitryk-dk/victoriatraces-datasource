@@ -1,14 +1,24 @@
 import type { Trace, TraceSpan } from '../panel/types';
+import { locationService } from '@grafana/runtime';
+
 import {
   buildAutoMetricsSelector,
   escapeMetricsQLValue,
+  openLogsForSpan,
   resolveSpanField,
   resolveSpanTemplate,
 } from './correlations';
 
 jest.mock('@grafana/runtime', () => ({
-  getDataSourceSrv: () => ({ getInstanceSettings: () => ({ type: 'test' }) }),
-  locationService: { getSearch: () => new URLSearchParams(), push: jest.fn() },
+  getDataSourceSrv: () => ({
+    getInstanceSettings: (uid: string) =>
+      ({
+        vlogs: { type: 'victoriametrics-logs-datasource' },
+        vtraces: { type: 'victoriametrics-traces-datasource' },
+        loki: { type: 'loki' },
+      })[uid] ?? { type: 'test' },
+  }),
+  locationService: { getSearch: jest.fn(() => new URLSearchParams()), push: jest.fn() },
 }));
 
 const span: TraceSpan = {
@@ -127,5 +137,61 @@ describe('buildAutoMetricsSelector', () => {
       )
     ).toBeUndefined();
     expect(buildAutoMetricsSelector(undefined, trace, span)).toBeUndefined();
+  });
+});
+
+describe('openLogsForSpan', () => {
+  const push = locationService.push as jest.Mock;
+  const getSearch = locationService.getSearch as jest.Mock;
+
+  const timedSpan: TraceSpan = { ...span, startTime: 1_000_000, duration: 200 };
+  const timedTrace: Trace = {
+    ...trace,
+    spans: [timedSpan, { ...timedSpan, spanID: 'span-2', startTime: 1_000_100, duration: 500 }],
+  };
+
+  beforeEach(() => {
+    push.mockClear();
+    getSearch.mockReturnValue(
+      new URLSearchParams({ panes: JSON.stringify({ abc: { datasource: 'vtraces', queries: [{ refId: 'A' }] } }) })
+    );
+  });
+
+  function companionPane() {
+    const search = new URLSearchParams(push.mock.calls[0][0].search.slice(1));
+    const panes = JSON.parse(search.get('panes')!);
+    const id = Object.keys(panes).find((k) => k !== 'abc')!;
+    return panes[id];
+  }
+
+  it('sends the VictoriaLogs raw-logs query type to a VictoriaLogs datasource', () => {
+    // VictoriaLogs has no "logsql-logs" type: its editor showed "Type: unknown".
+    openLogsForSpan({ datasourceUid: 'vlogs', query: 'trace_id:=${__span.traceId}' }, timedTrace, timedSpan);
+    const pane = companionPane();
+    expect(pane.datasource).toBe('vlogs');
+    expect(pane.queries[0]).toMatchObject({ expr: 'trace_id:=trace-1', queryType: 'instant' });
+  });
+
+  it('keeps this plugin\'s own logs query type when the target is VictoriaTraces', () => {
+    openLogsForSpan({ datasourceUid: 'vtraces' }, timedTrace, timedSpan);
+    expect(companionPane().queries[0].queryType).toBe('logsql-logs');
+  });
+
+  it('sends no query type to other logs datasources', () => {
+    openLogsForSpan({ datasourceUid: 'loki' }, timedTrace, timedSpan);
+    expect(companionPane().queries[0].queryType).toBeUndefined();
+  });
+
+  it('scopes the pane to the trace time rather than Explore\'s default range', () => {
+    openLogsForSpan({ datasourceUid: 'vlogs' }, timedTrace, timedSpan);
+    const { range } = companionPane();
+    const pad = 5 * 60_000;
+    expect(range).toEqual({ from: String(1_000_000 - pad), to: String(1_000_600 + pad) });
+  });
+
+  it('keeps the trace pane', () => {
+    openLogsForSpan({ datasourceUid: 'vlogs' }, timedTrace, timedSpan);
+    const search = new URLSearchParams(push.mock.calls[0][0].search.slice(1));
+    expect(JSON.parse(search.get('panes')!).abc).toEqual({ datasource: 'vtraces', queries: [{ refId: 'A' }] });
   });
 });

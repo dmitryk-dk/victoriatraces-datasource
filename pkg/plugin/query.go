@@ -72,7 +72,7 @@ func (d *Datasource) handleQuery(ctx context.Context, query backend.DataQuery, d
 
 	switch qm.QueryType {
 	case queryTypeTraceID:
-		return d.queryTrace(ctx, query, qm)
+		return d.queryTrace(ctx, query, qm, dsUID)
 	case queryTypeTraceList:
 		return d.queryTraceList(ctx, query, qm, dsUID)
 	case queryTypeSpanList:
@@ -90,7 +90,7 @@ func (d *Datasource) handleQuery(ctx context.Context, query backend.DataQuery, d
 	}
 }
 
-func (d *Datasource) queryTrace(ctx context.Context, query backend.DataQuery, qm queryModel) backend.DataResponse {
+func (d *Datasource) queryTrace(ctx context.Context, query backend.DataQuery, qm queryModel, dsUID string) backend.DataResponse {
 	if qm.TraceID == "" {
 		return backend.ErrDataResponse(backend.StatusBadRequest, "traceId is required")
 	}
@@ -120,7 +120,7 @@ func (d *Datasource) queryTrace(ctx context.Context, query backend.DataQuery, qm
 	}
 	traces := []JaegerTrace{trace}
 
-	traceFrame := TracesToFrame(traces)
+	traceFrame := TracesToFrame(traces, dsUID)
 	nodesFrame, edgesFrame := TraceToNodeGraphFrames(traces)
 	return backend.DataResponse{Frames: data.Frames{traceFrame, nodesFrame, edgesFrame}}
 }

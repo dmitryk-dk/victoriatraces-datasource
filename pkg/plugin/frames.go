@@ -73,7 +73,7 @@ func refsToRaw(refs []JaegerReference) json.RawMessage {
 // Field types must match what Grafana's TraceView expects:
 // - startTime/duration: float64 (FieldType.number), NOT int64
 // - tags/serviceTags/logs/references: json.RawMessage (FieldType.other)
-func TracesToFrame(traces []JaegerTrace) *data.Frame {
+func TracesToFrame(traces []JaegerTrace, dsUID string) *data.Frame {
 	var (
 		traceIDs       []string
 		spanIDs        []string
@@ -137,6 +137,7 @@ func TracesToFrame(traces []JaegerTrace) *data.Frame {
 	frame.SetMeta(&data.FrameMeta{
 		PreferredVisualization:         "trace",
 		PreferredVisualizationPluginID: "victoriametrics-traces-panel",
+		Custom:                         map[string]interface{}{"datasourceUid": dsUID},
 	})
 
 	return frame
