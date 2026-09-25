@@ -1,6 +1,6 @@
-const grafanaConfig = require('@grafana/eslint-config/flat');
+import grafanaConfig from '@grafana/eslint-config';
 
-module.exports = [
+export default [
   {
     ignores: [
       'node_modules/**',
@@ -25,7 +25,7 @@ module.exports = [
     // context API that ESLint 10 removed. Pin the version so detection
     // never runs.
     settings: {
-      react: { version: '19.2' },
+      react: { version: '19.3' },
     },
   },
   {
