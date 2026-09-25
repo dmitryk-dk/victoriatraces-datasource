@@ -107,7 +107,7 @@ const MonacoQueryField = (props: Props) => {
           });
 
           editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyK, () => {
-            global.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }));
+            window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }));
           });
 
           if (placeholder) {

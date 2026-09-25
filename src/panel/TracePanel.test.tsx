@@ -257,7 +257,7 @@ describe('TracePanel trace list', () => {
 
     beforeEach(() => {
       triggerIntersect = undefined;
-      global.IntersectionObserver = class {
+      globalThis.IntersectionObserver = class {
         constructor(private cb: (entries: Array<{ isIntersecting: boolean }>) => void) {
           triggerIntersect = () => this.cb([{ isIntersecting: true }]);
         }
