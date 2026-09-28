@@ -6,7 +6,33 @@ documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.2] - 2026-09-28
+
+### Fixed
+
+- Trace to logs: the companion pane opened against VictoriaLogs with this plugin's own
+  `logsql-logs` query type, which VictoriaLogs does not know ("Type: unknown"). The query
+  type now follows the target datasource: `instant` for VictoriaLogs, `logsql-logs` for
+  VictoriaTraces, none for others.
+- Trace to logs and trace to metrics: the companion pane now opens on the trace's own time
+  range, padded by 5 minutes, instead of Explore's default last hour, which returned
+  "No logs found" for older traces.
+- Full trace view: the trace frame now carries the datasource uid, so correlations use the
+  settings of the datasource being queried rather than the first VictoriaTraces datasource
+  found.
+- Heatmap: a lone trace, and the quietest cell on a busy grid, took the empty-cell colour
+  and disappeared. Colour is now relative to the busiest cell, matching the 0 → max
+  legend, and populated cells always stay distinguishable from empty ones.
+- Explore: ticking a facet or drilling from a chart rewrote queries in every pane,
+  including a companion logs pane. Only VictoriaTraces queries are changed now.
+
+### Changed
+
+- TypeScript 6.0.
+- `recharts` 3, React 19.3, `grafana-plugin-sdk-go` v0.296.5, and other dependency updates.
+- CodeQL actions are updated together, as mismatched versions fail the analysis.
+
+## [0.1.0] - 2026-06-06
 
 ### Changed
 
@@ -83,9 +109,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rendered, instead of disappearing from partial traces.
 - Docker Compose: VictoriaTraces 0.8.2 defaults `-otlpGRPC.tls` to true and then refuses to
   start without a key file, so the dev stack now passes `--otlpGRPC.tls=false`.
-
-## [1.0.0] - 2026-06-06
-
 ### Added
 
 **Querying**
@@ -135,5 +158,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OSV vulnerability scan gating the release workflow.
 - Apache-2.0 licensed.
 
-[Unreleased]: https://github.com/dmitryk-dk/victoriatraces-datasource/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/dmitryk-dk/victoriatraces-datasource/releases/tag/v1.0.0
+[0.1.2]: https://github.com/dmitryk-dk/victoriatraces-datasource/compare/v0.1.1...v0.1.2
+[0.1.0]: https://github.com/dmitryk-dk/victoriatraces-datasource/releases/tag/v1.0.0
