@@ -1,5 +1,4 @@
 import CopyWebpackPlugin from 'copy-webpack-plugin';
-import ESLintPlugin from 'eslint-webpack-plugin';
 import path from 'path';
 import ReplaceInFileWebpackPlugin from 'replace-in-file-webpack-plugin';
 import TerserPlugin from 'terser-webpack-plugin';
@@ -244,15 +243,7 @@ const config = async (env: Record<string, unknown>): Promise<Configuration[]> =>
       new SubresourceIntegrityPlugin({
         hashFuncNames: ['sha256'],
       }),
-      ...(env.development
-        ? [
-            new LiveReloadPlugin(),
-            new ESLintPlugin({
-              extensions: ['.ts', '.tsx'],
-              lintDirtyModulesOnly: Boolean(env.development),
-            }),
-          ]
-        : []),
+      ...(env.development ? [new LiveReloadPlugin()] : []),
     ],
 
     resolve: {

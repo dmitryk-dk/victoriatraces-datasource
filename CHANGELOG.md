@@ -6,6 +6,40 @@ documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] - 2026-10-15
+
+### Fixed
+
+- Dashboards: ticking a facet, editing a filter or column, and drilling from the charts
+  panel did nothing outside Explore, because they only rewrote the Explore URL. On a
+  dashboard each panel now applies the change to its own query, and a drill from the
+  charts panel also narrows the trace list.
+- Dashboards: opening a trace from the trace list, or a service from the node graph,
+  now opens Explore on the dashboard's time range instead of doing nothing.
+- Trace to logs and trace to metrics: the companion pane now keeps the time range of the
+  Explore pane it was opened from, and falls back to the trace's own range only when
+  that pane has none.
+
+### Security
+
+- Go 1.26.9, fixing standard library vulnerabilities in `net/http`, HTTP/2,
+  `crypto/tls`, `net/textproto` and `html/template`; `golang.org/x/net` v0.60.0.
+- `moment` 2.31.0 (path traversal via locale name) and `dompurify` 3.4.17
+  (`IN_PLACE` sanitization XSS). Both are provided by Grafana at runtime and are not
+  bundled with the plugin; the lockfile update clears the advisories.
+- `source-map-js` 1.2.2 (build-time denial of service).
+- Removed `eslint-webpack-plugin`, which pulled in `braces` with an unfixed
+  high-severity advisory. It only linted during `npm run dev`; `npm run lint` and CI
+  are unchanged.
+
+### Changed
+
+- `grafana-plugin-sdk-go` v0.297.0, webpack 5.111, `sass-loader` 17,
+  `eslint-plugin-jsdoc` 65, `eslint-config-prettier` 10. `terser-webpack-plugin` is now
+  a direct dependency, as webpack 5.111 no longer installs it.
+- CI: CodeQL actions v4.38.3, `actions/setup-node` v7.1.0, `actions/upload-artifact`
+  v7.0.2.
+
 ## [0.1.2] - 2026-09-28
 
 ### Fixed
@@ -158,5 +192,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OSV vulnerability scan gating the release workflow.
 - Apache-2.0 licensed.
 
+[0.1.3]: https://github.com/dmitryk-dk/victoriatraces-datasource/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/dmitryk-dk/victoriatraces-datasource/compare/v0.1.1...v0.1.2
 [0.1.0]: https://github.com/dmitryk-dk/victoriatraces-datasource/releases/tag/v1.0.0

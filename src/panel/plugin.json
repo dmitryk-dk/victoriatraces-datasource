@@ -3,7 +3,7 @@
   "name": "VictoriaTraces",
   "id": "victoriametrics-traces-panel",
   "info": {
-    "version": "0.1.2",
+    "version": "0.1.3",
     "description": "Custom traces visualization panel for VictoriaTraces",
     "author": {
       "name": "dmitryk-dk"
@@ -41,7 +41,7 @@
         "url": "https://docs.victoriametrics.com/victoriatraces/"
       }
     ],
-    "updated": "2026-09-28"
+    "updated": "2026-10-15"
   },
   "dependencies": {
     "grafanaDependency": ">=12.3.0"
