@@ -5,6 +5,7 @@ import { locationService } from '@grafana/runtime';
 import type { GrafanaTheme2, PanelProps } from '@grafana/data';
 import { DependencyGraph } from '../panel/components/DependencyGraph';
 import { fieldValues } from '../panel/utils/frameToTraces';
+import { isExploreLocation, openInExplore, queryFromData } from '../trace-ui/query/exploreQuery';
 
 class ErrorBoundary extends Component<{ children: ReactNode; fallback?: ReactNode }, { error: Error | null }> {
   state: { error: Error | null } = { error: null };
@@ -38,7 +39,7 @@ const getStyles = (theme: GrafanaTheme2) => ({
   }),
 });
 
-function navigateExploreToService(service: string) {
+function navigateExploreToService(service: string, outside: { query: unknown; range: { from: string; to: string } }) {
   const search = locationService.getSearch();
   const rebuild = (q: any) => ({
     refId: q?.refId,
@@ -47,6 +48,12 @@ function navigateExploreToService(service: string) {
     queryType: 'search',
     serviceName: service,
   });
+
+  // A dashboard has no pane to rewrite: the service's traces open in Explore.
+  if (!isExploreLocation()) {
+    openInExplore(rebuild(outside.query), outside.range);
+    return;
+  }
 
   const panesRaw = search.get('panes');
   if (panesRaw) {
@@ -92,7 +99,16 @@ function navigateExploreToService(service: string) {
 export function NodeGraphPanel({ data, width, height }: PanelProps) {
   const styles = useStyles2(getStyles);
 
-  const handleNodeClick = useCallback((service: string) => navigateExploreToService(service), []);
+  const query = queryFromData(data);
+  const { timeRange } = data;
+  const handleNodeClick = useCallback(
+    (service: string) =>
+      navigateExploreToService(service, {
+        query,
+        range: { from: String(timeRange.from.valueOf()), to: String(timeRange.to.valueOf()) },
+      }),
+    [query, timeRange]
+  );
 
   const nodesFrame = data.series.find((f) => f.name === 'nodes');
   const edgesFrame = data.series.find((f) => f.name === 'edges');

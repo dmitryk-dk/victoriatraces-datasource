@@ -12,7 +12,11 @@ const mockFetch = jest.fn();
 jest.mock('@grafana/runtime', () => ({
   getBackendSrv: () => ({ fetch: mockFetch }),
   getDataSourceSrv: () => ({ getList: () => [], getInstanceSettings: () => ({ jsonData: {} }) }),
-  locationService: { getSearch: () => new URLSearchParams(), push: jest.fn() },
+  locationService: {
+    getSearch: () => new URLSearchParams(),
+    getLocation: () => ({ pathname: '/explore' }),
+    push: jest.fn(),
+  },
 }));
 
 const from = dateTime('2026-08-18T10:00:00Z');

@@ -6,19 +6,24 @@ import { of } from 'rxjs';
 import { TracePanel } from './TracePanel';
 import { invalidateResources } from '../trace-ui/api/resource';
 import { TraceChartSelectionEvent } from '../trace-ui/events/chartSelection';
+import { TraceFilterEditEvent } from '../trace-ui/events/filterEdit';
 
 // Renders the panel against a stubbed runtime. Covers what typecheck cannot:
 // that the trace-list frame actually mounts the list, charts and preview.
 
 const mockFetch = jest.fn();
+const mockPathname = jest.fn(() => '/explore');
+const mockDsQuery = jest.fn();
 
 jest.mock('@grafana/runtime', () => ({
   getBackendSrv: () => ({ fetch: mockFetch }),
   getDataSourceSrv: () => ({
     getList: () => [],
     getInstanceSettings: () => ({ jsonData: {} }),
+    get: () => Promise.resolve({ query: mockDsQuery }),
   }),
   locationService: {
+    getLocation: () => ({ pathname: mockPathname() }),
     getSearch: () =>
       new URLSearchParams({
         schemaVersion: '1',
@@ -558,6 +563,96 @@ describe('TracePanel filter sidebar', () => {
     expect(query.expr).toBe('_time:5m');
     expect(query.customFields).toEqual(['http.route']);
     expect(query.traceFilters).toEqual([{ kind: 'operation', value: 'POST /order' }]);
+  });
+
+  it('applies a ticked facet on a dashboard, where there is no Explore URL to edit', async () => {
+    // A dashboard panel cannot rewrite its saved query: the edit used to be
+    // written to panes that do not exist, and the click did nothing.
+    mockPathname.mockReturnValue('/d/abc/my-dashboard');
+    mockDsQuery.mockReset();
+    mockDsQuery.mockReturnValue(of({ data: [traceListFrame()], state: LoadingState.Done }));
+    const { locationService } = jest.requireMock('@grafana/runtime');
+    locationService.push.mockClear();
+    try {
+      render(<TracePanel {...propsWithSelection()} />);
+      const frontend = await screen.findByTitle('frontend');
+      fireEvent.click(frontend.querySelector('input[type="checkbox"]')!);
+
+      await waitFor(() => expect(mockDsQuery).toHaveBeenCalled());
+      const request = mockDsQuery.mock.calls.at(-1)[0];
+      expect(request.targets[0].services).toEqual(['checkout', 'frontend']);
+      expect(request.targets[0].traceFilters).toEqual([{ kind: 'operation', value: 'POST /order' }]);
+      expect(locationService.push).not.toHaveBeenCalled();
+      // The sidebar reads the edited query back, so the tick sticks.
+      await waitFor(() =>
+        expect(screen.getByTitle('frontend').querySelector('input[type="checkbox"]')).toBeChecked()
+      );
+    } finally {
+      mockPathname.mockReturnValue('/explore');
+    }
+  });
+
+  it('applies a drill from a dashboard\'s charts panel to its own query', async () => {
+    // The charts panel cannot reach the list's saved query; it announces the
+    // drill on the dashboard bus instead.
+    mockPathname.mockReturnValue('/d/abc/my-dashboard');
+    mockDsQuery.mockReset();
+    mockDsQuery.mockReturnValue(of({ data: [traceListFrame()], state: LoadingState.Done }));
+    try {
+      const props = propsWithSelection();
+      render(<TracePanel {...props} />);
+      await screen.findByTitle('checkout');
+
+      act(() => {
+        props.eventBus.publish(
+          new TraceFilterEditEvent({ added: [{ kind: 'operation', value: 'GET /' }], replaceKinds: ['operation'] })
+        );
+      });
+
+      await waitFor(() => expect(mockDsQuery).toHaveBeenCalled());
+      const target = mockDsQuery.mock.calls.at(-1)[0].targets[0];
+      expect(target.traceFilters).toEqual([{ kind: 'operation', value: 'GET /' }]);
+      expect(target.services).toEqual(['checkout']);
+    } finally {
+      mockPathname.mockReturnValue('/explore');
+    }
+  });
+
+  it('ignores a drill event in Explore, where the URL already carries it', async () => {
+    mockDsQuery.mockReset();
+    const props = propsWithSelection();
+    render(<TracePanel {...props} />);
+    await screen.findByTitle('checkout');
+
+    act(() => {
+      props.eventBus.publish(
+        new TraceFilterEditEvent({ added: [{ kind: 'operation', value: 'GET /' }], replaceKinds: ['operation'] })
+      );
+    });
+
+    expect(mockDsQuery).not.toHaveBeenCalled();
+  });
+
+  it('opens a trace in Explore from a dashboard', async () => {
+    // A dashboard has no Explore pane to swap the query in: the click did nothing.
+    mockPathname.mockReturnValue('/d/abc/my-dashboard');
+    const { locationService } = jest.requireMock('@grafana/runtime');
+    locationService.push.mockClear();
+    try {
+      render(<TracePanel {...propsWithSelection()} />);
+      const [open] = await screen.findAllByRole('button', { name: 'Open full trace view' });
+      fireEvent.click(open);
+
+      const location = locationService.push.mock.calls.at(-1)[0];
+      expect(location.pathname).toBe('/explore');
+      const panes = JSON.parse(new URLSearchParams(location.search).get('panes')!);
+      const [pane] = Object.values(panes) as any[];
+      expect(pane.datasource).toBe('test-uid');
+      expect(pane.queries[0]).toMatchObject({ queryType: 'traceId', traceId: 'abc123', refId: 'A' });
+      expect(pane.range).toEqual({ from: String(from.valueOf()), to: String(to.valueOf()) });
+    } finally {
+      mockPathname.mockReturnValue('/explore');
+    }
   });
 
   it('keeps the filters when a column is added', async () => {

@@ -167,18 +167,56 @@ export function addFiltersToQuery(
   added: TraceFilter[],
   replaceKinds: ReadonlySet<TraceFilter['kind']>
 ): void {
-  navigateExplore((q) => {
-    const current: TraceFilter[] = Array.isArray(q.traceFilters) ? q.traceFilters : [];
-    const services: string[] = Array.isArray(q.services) ? q.services : [];
-    const kept = current.filter((f) => !replaceKinds.has(f.kind));
-    const filters = [...kept, ...added];
-    const derived = buildTraceListQuery({ filters, services, rawQuery: q.expr ?? '' });
-    return patchTarget(q, {
-      traceFilters: filters,
-      where: derived.where,
-      postFilter: derived.postFilter,
-      matchCond: derived.matchCond,
-      ...(derived.limit !== undefined ? { limit: derived.limit } : {}),
-    });
+  navigateExplore((q) => withFilters(q, added, replaceKinds));
+}
+
+/** The query with `added` in place of any filter of the kinds given. */
+export function withFilters(q: any, added: TraceFilter[], replaceKinds: ReadonlySet<TraceFilter['kind']>) {
+  const current: TraceFilter[] = Array.isArray(q?.traceFilters) ? q.traceFilters : [];
+  const services: string[] = Array.isArray(q?.services) ? q.services : [];
+  const kept = current.filter((f) => !replaceKinds.has(f.kind));
+  const filters = [...kept, ...added];
+  const derived = buildTraceListQuery({ filters, services, rawQuery: q?.expr ?? '' });
+  return patchTarget(q, {
+    traceFilters: filters,
+    where: derived.where,
+    postFilter: derived.postFilter,
+    matchCond: derived.matchCond,
+    ...(derived.limit !== undefined ? { limit: derived.limit } : {}),
+  });
+}
+
+/** Whether the panel is rendering inside Explore rather than on a dashboard. */
+export function isExploreLocation(): boolean {
+  return /\/explore(\/|$)/.test(locationService.getLocation().pathname);
+}
+
+/**
+ * Opens Explore on a query, from somewhere that is not Explore.
+ *
+ * A dashboard panel has no pane to rewrite, so opening a trace from it leaves
+ * the dashboard for Explore. The range is the dashboard's own, as written in
+ * its URL, so the trace is looked up where it was found.
+ */
+export function openInExplore(query: any, fallbackRange?: { from: string; to: string }): void {
+  const search = locationService.getSearch();
+  const from = search.get('from');
+  const to = search.get('to');
+  const range = from && to ? { from, to } : fallbackRange;
+  const datasource = query?.datasource?.uid ?? query?.datasource;
+  locationService.push({
+    pathname: '/explore',
+    search:
+      '?' +
+      new URLSearchParams({
+        schemaVersion: '1',
+        panes: JSON.stringify({
+          [Math.random().toString(36).slice(2, 10)]: {
+            ...(typeof datasource === 'string' && { datasource }),
+            queries: [query],
+            ...(range && { range }),
+          },
+        }),
+      }).toString(),
   });
 }

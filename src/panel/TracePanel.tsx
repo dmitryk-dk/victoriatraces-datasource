@@ -39,14 +39,18 @@ import {
 import { useFieldNames } from '../trace-ui/api/traces';
 import { TraceFilterSidebar } from '../trace-ui/components/TraceFilterSidebar';
 import { TraceChartSelectionEvent } from '../trace-ui/events/chartSelection';
+import { TraceFilterEditEvent } from '../trace-ui/events/filterEdit';
 import { buildTraceListQuery } from '../trace-ui/filters/logsql';
 import {
   datasourceUidFromData,
   queryFromData,
   navigateExplore,
+  openInExplore,
   patchTarget,
   rebuildTarget,
+  withFilters,
 } from '../trace-ui/query/exploreQuery';
+import { useLocalQuery } from '../trace-ui/query/useLocalQuery';
 import type { TraceFilter } from '../trace-ui/filters/types';
 import type { Trace, TraceSpan } from './types';
 import type { TraceToLogsOptions, TraceToMetricsOptions, VictoriaTracesQuery } from '../types';
@@ -181,8 +185,11 @@ function writeStoredFiltersOpen(open: boolean): void {
   }
 }
 
-export function TracePanel({ data, width, height, eventBus, onChangeTimeRange }: PanelProps) {
+export function TracePanel({ data: panelData, width, height, eventBus, onChangeTimeRange }: PanelProps) {
   const styles = useStyles2(getStyles);
+  // Filter and column edits: Explore re-runs them from the URL, a dashboard
+  // panel runs them itself — see useLocalQuery.
+  const { data, editQuery, inExplore } = useLocalQuery(panelData, datasourceUidFromData(panelData));
   // Remembered with its trace: a choice made in one trace must not follow the
   // user into the next one, which has its own matched span to land on.
   const [spanSelection, setSpanSelection] = useState<SpanSelection | null>(null);
@@ -232,8 +239,8 @@ export function TracePanel({ data, width, height, eventBus, onChangeTimeRange }:
   // Custom columns change what the backend aggregates, so they live in the
   // query rather than in panel state.
   const setCustomFields = useCallback((fields: string[]) => {
-    navigateExplore((q) => patchTarget(q, { customFields: fields }));
-  }, []);
+    editQuery((q) => patchTarget(q, { customFields: fields }));
+  }, [editQuery]);
 
   const metaRange = useMemo(
     () => ({ start: data.timeRange.from.toISOString(), end: data.timeRange.to.toISOString() }),
@@ -306,7 +313,7 @@ export function TracePanel({ data, width, height, eventBus, onChangeTimeRange }:
   // Sidebar edits go through the query, like every other filter change.
   const applyFilters = useCallback(
     (next: { services?: string[]; filters?: TraceFilter[]; entity?: 'traces' | 'spans' }) => {
-      navigateExplore((q) => {
+      editQuery((q) => {
         const services = next.services ?? (Array.isArray(q.services) ? q.services : []);
         const filters = next.filters ?? (Array.isArray(q.traceFilters) ? q.traceFilters : []);
         const nextEntity = next.entity ?? q.entity ?? 'traces';
@@ -330,7 +337,7 @@ export function TracePanel({ data, width, height, eventBus, onChangeTimeRange }:
         });
       });
     },
-    []
+    [editQuery]
   );
 
   // Drilling from a chart adds a filter to the query, so the list, the charts
@@ -367,6 +374,18 @@ export function TracePanel({ data, width, height, eventBus, onChangeTimeRange }:
       .subscribe((event) => setChartSelection(event.payload.selection));
     return () => sub.unsubscribe();
   }, [eventBus]);
+
+  // A drill on a dashboard's charts panel. In Explore the drill is already in
+  // the URL, so only a dashboard needs to hear it.
+  useEffect(() => {
+    if (inExplore) {
+      return;
+    }
+    const sub = eventBus
+      .getStream(TraceFilterEditEvent)
+      .subscribe(({ payload }) => editQuery((q) => withFilters(q, payload.added, new Set(payload.replaceKinds))));
+    return () => sub.unsubscribe();
+  }, [eventBus, inExplore, editQuery]);
 
   const searchFrame = data.series.find((f) => f.name === 'trace_search');
   const traceFrame = data.series.find((f) => f.name === 'traces');
@@ -488,14 +507,32 @@ export function TracePanel({ data, width, height, eventBus, onChangeTimeRange }:
     }
   }, [trace]);
 
-  const handleTraceClick = useCallback((traceId: string) => {
-    navigateExplore((q) => rebuildTarget(q, { queryType: 'traceId', traceId }));
-  }, []);
+  // Explore swaps its query for the trace. A dashboard panel is too small to
+  // be the trace view, and its saved query is not ours to swap, so the trace
+  // opens in Explore.
+  const openTraceQuery = useCallback(
+    (next: Partial<VictoriaTracesQuery>) => {
+      if (inExplore) {
+        navigateExplore((q) => rebuildTarget(q, next));
+        return;
+      }
+      openInExplore(rebuildTarget(traceTarget, next), {
+        from: String(data.timeRange.from.valueOf()),
+        to: String(data.timeRange.to.valueOf()),
+      });
+    },
+    [inExplore, traceTarget, data.timeRange]
+  );
+
+  const handleTraceClick = useCallback(
+    (traceId: string) => openTraceQuery({ queryType: 'traceId', traceId }),
+    [openTraceQuery]
+  );
 
   const handleBackToSearch = useCallback(() => {
     setSpanSelection(null);
-    navigateExplore((q) => rebuildTarget(q, { queryType: 'search' }));
-  }, []);
+    editQuery((q) => rebuildTarget(q, { queryType: 'search' }));
+  }, [editQuery]);
 
   // --- Panel instance: Trace detail only (traces frame) ---
   if (!searchFrame && !listFrame && trace) {
@@ -527,13 +564,11 @@ export function TracePanel({ data, width, height, eventBus, onChangeTimeRange }:
     // Carry the matched span through, so a row found via a service or
     // operation filter opens on that span rather than the trace's root.
     const openTrace = (row: TraceListRow) =>
-      navigateExplore((q) =>
-        rebuildTarget(q, {
-          queryType: 'traceId',
-          traceId: row.traceID,
-          spanId: row.matchedSpanID ?? row.spanID,
-        })
-      );
+      openTraceQuery({
+        queryType: 'traceId',
+        traceId: row.traceID,
+        spanId: row.matchedSpanID ?? row.spanID,
+      });
 
 
     return (

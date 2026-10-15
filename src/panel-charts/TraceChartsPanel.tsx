@@ -7,7 +7,15 @@ import { ChartView, TraceCharts } from '../trace-ui/components/TraceCharts';
 import type { ChartSelection } from '../trace-ui/components/heatmapGrid';
 import { TraceChartSelectionEvent } from '../trace-ui/events/chartSelection';
 import { drillDurationFilter } from '../trace-ui/filters/chartDrill';
-import { addFiltersToQuery, datasourceUidFromData, queryFromData } from '../trace-ui/query/exploreQuery';
+import { TraceFilterEditEvent } from '../trace-ui/events/filterEdit';
+import type { TraceFilter } from '../trace-ui/filters/types';
+import {
+  addFiltersToQuery,
+  datasourceUidFromData,
+  queryFromData,
+  withFilters,
+} from '../trace-ui/query/exploreQuery';
+import { useLocalQuery } from '../trace-ui/query/useLocalQuery';
 import type { VictoriaTracesQuery } from '../types';
 
 const CHARTS_FRAME_NAME = 'trace_charts';
@@ -25,10 +33,13 @@ const CHARTS_FRAME_NAME = 'trace_charts';
  * needs nothing from the frame but the datasource uid and the query the list
  * was built from. Drills are written to the Explore query, which is what makes
  * the list follow; a drawn selection goes over the event bus instead, since it
- * is a preview rather than a change of search.
+ * is a preview rather than a change of search. On a dashboard there is no
+ * Explore query to write: the drill narrows this panel's own query and goes
+ * over the bus to the list, which narrows its.
  */
-export function TraceChartsPanel({ data, eventBus, onChangeTimeRange }: PanelProps) {
+export function TraceChartsPanel({ data: panelData, eventBus, onChangeTimeRange }: PanelProps) {
   const styles = useStyles2(getStyles);
+  const { data, editQuery, inExplore } = useLocalQuery(panelData, datasourceUidFromData(panelData));
   const [view, setView] = useState<ChartView>('heatmap');
   const [selection, setSelection] = useState<ChartSelection | null>(null);
 
@@ -44,9 +55,21 @@ export function TraceChartsPanel({ data, eventBus, onChangeTimeRange }: PanelPro
     [eventBus]
   );
 
+  const addFilters = useCallback(
+    (added: TraceFilter[], replaceKinds: Array<TraceFilter['kind']>) => {
+      if (inExplore) {
+        addFiltersToQuery(added, new Set(replaceKinds));
+        return;
+      }
+      editQuery((q) => withFilters(q, added, new Set(replaceKinds)));
+      eventBus.publish(new TraceFilterEditEvent({ added, replaceKinds }));
+    },
+    [inExplore, editQuery, eventBus]
+  );
+
   const drillOperation = useCallback(
-    (operation: string) => addFiltersToQuery([{ kind: 'operation', value: operation }], new Set(['operation'])),
-    []
+    (operation: string) => addFilters([{ kind: 'operation', value: operation }], ['operation']),
+    [addFilters]
   );
 
   // Committing a window is a change of search, not a preview: it moves the
@@ -60,10 +83,10 @@ export function TraceChartsPanel({ data, eventBus, onChangeTimeRange }: PanelPro
       });
       const duration = drillDurationFilter(undefined, selected);
       if (duration) {
-        addFiltersToQuery([duration], new Set(['duration']));
+        addFilters([duration], ['duration']);
       }
     },
-    [onChangeTimeRange, publishSelection]
+    [onChangeTimeRange, publishSelection, addFilters]
   );
 
   const where = useMemo(() => target?.where ?? '', [target]);

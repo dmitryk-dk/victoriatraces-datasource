@@ -182,11 +182,35 @@ describe('openLogsForSpan', () => {
     expect(companionPane().queries[0].queryType).toBeUndefined();
   });
 
-  it('scopes the pane to the trace time rather than Explore\'s default range', () => {
+  it('takes the first pane\'s range, so both time pickers agree', () => {
+    getSearch.mockReturnValue(
+      new URLSearchParams({
+        panes: JSON.stringify({
+          abc: { datasource: 'vtraces', queries: [{ refId: 'A' }], range: { from: 'now-6h', to: 'now' } },
+        }),
+      })
+    );
+    openLogsForSpan({ datasourceUid: 'vlogs' }, timedTrace, timedSpan);
+    expect(companionPane().range).toEqual({ from: 'now-6h', to: 'now' });
+  });
+
+  it('falls back to the trace time when the first pane has no range', () => {
     openLogsForSpan({ datasourceUid: 'vlogs' }, timedTrace, timedSpan);
     const { range } = companionPane();
     const pad = 5 * 60_000;
     expect(range).toEqual({ from: String(1_000_000 - pad), to: String(1_000_600 + pad) });
+  });
+
+  it('opens Explore from a dashboard, over the dashboard\'s range', () => {
+    // A dashboard has no panes: writing `right` onto its URL did nothing.
+    getSearch.mockReturnValue(new URLSearchParams({ from: 'now-1h', to: 'now', orgId: '1' }));
+    openLogsForSpan({ datasourceUid: 'vlogs' }, timedTrace, timedSpan);
+    const location = push.mock.calls[0][0];
+    expect(location.pathname).toBe('/explore');
+    const panes = JSON.parse(new URLSearchParams(location.search.slice(1)).get('panes')!);
+    const [pane] = Object.values(panes) as any[];
+    expect(pane).toMatchObject({ datasource: 'vlogs', range: { from: 'now-1h', to: 'now' } });
+    expect(pane.queries[0].expr).toBeDefined();
   });
 
   it('keeps the trace pane', () => {
