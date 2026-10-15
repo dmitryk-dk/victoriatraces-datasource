@@ -88,6 +88,13 @@ const LOGS_QUERY_TYPE: Record<string, string> = {
   'victoriametrics-traces-datasource': 'logsql-logs',
 };
 
+type PaneRange = { from: string; to: string };
+
+function isPaneRange(range: unknown): range is PaneRange {
+  const r = range as Partial<PaneRange> | undefined;
+  return typeof r?.from === 'string' && typeof r?.to === 'string';
+}
+
 /**
  * Opens a correlation query in Explore's companion pane.
  *
@@ -99,7 +106,7 @@ const LOGS_QUERY_TYPE: Record<string, string> = {
 export function openSplitPane(
   dsUid: string,
   queries: Array<Record<string, unknown>>,
-  range?: { from: string; to: string }
+  fallbackRange?: PaneRange
 ): void {
   const search = locationService.getSearch();
   const dsSettings = getDataSourceSrv().getInstanceSettings(dsUid);
@@ -107,18 +114,24 @@ export function openSplitPane(
     ...q,
     datasource: { uid: dsUid, type: dsSettings?.type ?? '' },
   }));
+  const pane = (range: PaneRange | undefined) => ({
+    datasource: dsUid,
+    queries: queriesWithDs,
+    ...(range && { range }),
+  });
 
   const panesRaw = search.get('panes');
   if (panesRaw) {
     try {
       const panes = JSON.parse(decodeURIComponent(panesRaw));
       const firstId = Object.keys(panes)[0];
+      const firstRange = firstId ? panes[firstId]?.range : undefined;
       const companionId = Math.random().toString(36).slice(2, 10);
       const next: Record<string, unknown> = {};
       if (firstId) {
         next[firstId] = panes[firstId];
       }
-      next[companionId] = { datasource: dsUid, queries: queriesWithDs, ...(range && { range }) };
+      next[companionId] = pane(isPaneRange(firstRange) ? firstRange : fallbackRange);
       locationService.push({
         search:
           '?' +
@@ -133,14 +146,37 @@ export function openSplitPane(
     }
   }
 
-  // Legacy Explore URL (`left` + `right`) — overwrite `right`.
-  const right = JSON.stringify({ datasource: dsUid, queries: queriesWithDs, ...(range && { range }) });
+  const leftRaw = search.get('left');
+  if (leftRaw) {
+    // Legacy Explore URL (`left` + `right`) — overwrite `right`.
+    let leftRange: unknown;
+    try {
+      leftRange = JSON.parse(decodeURIComponent(leftRaw))?.range;
+    } catch {
+      /* no range to inherit */
+    }
+    locationService.push({
+      search:
+        '?' +
+        new URLSearchParams({
+          ...Object.fromEntries(search.entries()),
+          right: JSON.stringify(pane(isPaneRange(leftRange) ? leftRange : fallbackRange)),
+        }).toString(),
+    });
+    return;
+  }
+
+  // Not in Explore: a dashboard keeps its range in `from` / `to`.
+  const from = search.get('from');
+  const to = search.get('to');
+  const range = from && to ? { from, to } : fallbackRange;
   locationService.push({
+    pathname: '/explore',
     search:
       '?' +
       new URLSearchParams({
-        ...Object.fromEntries(search.entries()),
-        right,
+        schemaVersion: '1',
+        panes: JSON.stringify({ [Math.random().toString(36).slice(2, 10)]: pane(range) }),
       }).toString(),
   });
 }
